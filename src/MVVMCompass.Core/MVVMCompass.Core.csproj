@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId Condition="'$(NavigationCorePackageId)' == ''">MVVMCompass.Core</PackageId>
+    <PackageId Condition="'$(NavigationCorePackageId)' != ''">$(NavigationCorePackageId)</PackageId>
+    <Description>UI-independent navigation lifetime and ownership primitives.</Description>
+    <Authors>MVVMCompass contributors</Authors>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="MVVMCompass" />
+    <InternalsVisibleTo Include="MVVMCompass.Core.Tests" />
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

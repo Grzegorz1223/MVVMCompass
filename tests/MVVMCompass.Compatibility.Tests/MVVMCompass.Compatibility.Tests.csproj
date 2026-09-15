@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../../src/MVVMCompass.Maui/MVVMCompass.Maui.csproj" />
+    <None Update="PublicApi.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Current*Api.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

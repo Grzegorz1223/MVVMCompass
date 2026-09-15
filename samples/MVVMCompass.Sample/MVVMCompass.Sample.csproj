@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework />
+    <TargetFrameworks>net10.0-android</TargetFrameworks>
+    <TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('osx'))">$(TargetFrameworks);net10.0-ios</TargetFrameworks>
+    <TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('windows'))">$(TargetFrameworks);net10.0-windows10.0.19041.0</TargetFrameworks>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>MVVMCompass.Sample</AssemblyName>
+    <RootNamespace>MVVMCompass.Sample</RootNamespace>
+    <UseMaui>true</UseMaui>
+    <SingleProject>true</SingleProject>
+    <MauiVersion>10.0.101</MauiVersion>
+    <MauiXamlInflator>SourceGen</MauiXamlInflator>
+    <ApplicationTitle>MVVMCompass Sample</ApplicationTitle>
+    <ApplicationId>dev.mvvmcompass.sample</ApplicationId>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <ApplicationVersion>1</ApplicationVersion>
+    <WindowsPackageType>None</WindowsPackageType>
+    <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
+    <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
+    <NavigationPackageVersion Condition="'$(NavigationPackageVersion)' == ''">$(Version)</NavigationPackageVersion>
+    <NavigationMauiPackageId Condition="'$(NavigationMauiPackageId)' == ''">MVVMCompass.Maui</NavigationMauiPackageId>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">15.0</SupportedOSPlatformVersion>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">15.0</SupportedOSPlatformVersion>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">23.0</SupportedOSPlatformVersion>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</SupportedOSPlatformVersion>
+    <TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
+  </PropertyGroup>
+  <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows' and '$(RuntimeIdentifierOverride)' != ''">
+    <RuntimeIdentifier>$(RuntimeIdentifierOverride)</RuntimeIdentifier>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../tests/MVVMCompass.Maui.SmokeTests/**/*.cs" />
+    <MauiXaml Include="../../tests/MVVMCompass.Maui.SmokeTests/**/*.xaml" />
+    <ProjectReference Include="../../src/MVVMCompass.Maui/MVVMCompass.Maui.csproj" Condition="'$(NavigationUsePackages)' != 'true'" GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;TargetFrameworks" />
+    <PackageReference Include="$(NavigationMauiPackageId)" Version="$(NavigationPackageVersion)" Condition="'$(NavigationUsePackages)' == 'true'" />
+    <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
+    <MauiIcon Include="Resources/AppIcon/appicon.svg" ForegroundFile="Resources/AppIcon/appiconfg.svg" Color="#512BD4" />
+    <MauiSplashScreen Include="Resources/Splash/splash.svg" Color="#512BD4" BaseSize="128,128" />
+  </ItemGroup>
+</Project>

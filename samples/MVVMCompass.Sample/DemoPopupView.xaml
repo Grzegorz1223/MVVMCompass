@@ -1,0 +1,16 @@
+<nav:PopupViewBase xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+                   xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+                   xmlns:nav="clr-namespace:MVVMCompass;assembly=MVVMCompass"
+                   xmlns:vm="clr-namespace:MVVMCompass.Sample"
+                   x:Class="MVVMCompass.Sample.DemoPopupView" x:TypeArguments="vm:DemoPopupViewModel,x:String" x:DataType="vm:DemoPopupViewModel"
+                   CanBeDismissedByTappingOutsideOfPopup="True">
+    <VerticalStackLayout WidthRequest="280" Padding="18" Spacing="12">
+        <Label Text="Toolkit popup" FontSize="24" FontAttributes="Bold" />
+        <Label Text="The ViewModel closes this popup through its injected navigation service." />
+        <HorizontalStackLayout><Switch IsToggled="{Binding AllowNavigation}" /><Label Text="Allow close" VerticalTextAlignment="Center" /></HorizontalStackLayout>
+        <Label Text="Try tapping outside or Android Back with Allow close on and off." FontSize="12" />
+        <Button Text="Return a result" Command="{Binding AcceptCommand}" />
+        <Button Text="Dismiss without a result" Command="{Binding CancelCommand}" />
+        <Label Text="{Binding Status}" />
+    </VerticalStackLayout>
+</nav:PopupViewBase>

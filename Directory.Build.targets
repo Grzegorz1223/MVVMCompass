@@ -1,0 +1,57 @@
+<Project>
+  <PropertyGroup Condition="'$(IsPackable)' == 'true'">
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Copyright>Copyright (c) 2026 MVVMCompass contributors</Copyright>
+    <PackageTags>mvvm;navigation;maui;viewmodel;dependency-injection</PackageTags>
+    <PackageReleaseNotes>https://github.com/Grzegorz1223/MVVMCompass/blob/main/CHANGELOG.md</PackageReleaseNotes>
+    <EnablePackageValidation>true</EnablePackageValidation>
+    <EnableStrictModeForCompatibleTfms>true</EnableStrictModeForCompatibleTfms>
+    <EnableStrictModeForCompatibleFrameworksInPackage>true</EnableStrictModeForCompatibleFrameworksInPackage>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(IsPackable)' == 'true' and '$(NavigationPublicRelease)' == 'true'">
+    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);ValidateNavigationReleaseSourceLink</TargetsForTfmSpecificBuildOutput>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(IsPackable)' == 'true'">
+    <None Include="$(MSBuildThisFileDirectory)LICENSE" Pack="true" PackagePath="/" />
+  </ItemGroup>
+  <Target Name="ValidateNavigationReleaseMetadata" BeforeTargets="PrepareForBuild;GenerateNuspec"
+          DependsOnTargets="InitializeSourceControlInformation"
+          Condition="'$(IsPackable)' == 'true' and '$(NavigationPublicRelease)' == 'true'">
+    <Error Condition="'$(RepositoryUrl)' == '' or '$(SourceRevisionId)' == ''"
+           Text="Release packages require a repository URL and committed source revision." />
+    <Error Condition="'$(NoBuild)' == 'true'"
+           Text="Public release packages must build their tagged source. Do not use --no-build." />
+    <Error Condition="'$(Configuration)' != 'Release'"
+           Text="Public release packages require the Release configuration." />
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(PackageVersion)', '^\d+\.\d+\.\d+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'))"
+           Text="Public packages require a semantic version without build metadata." />
+    <Error Condition="'$(NavigationReleaseTag)' != 'v$(PackageVersion)' or '$(Version)' != '$(PackageVersion)'"
+           Text="Pass NavigationReleaseTag=v&lt;version&gt; and use the same Version and PackageVersion." />
+    <Exec Command="git -C &quot;$(MSBuildThisFileDirectory)&quot; status --porcelain --untracked-files=normal" ConsoleToMSBuild="true" StandardOutputImportance="Low">
+      <Output TaskParameter="ConsoleOutput" ItemName="_NavigationUncommittedFiles" />
+    </Exec>
+    <Error Condition="'@(_NavigationUncommittedFiles)' != ''"
+           Text="Public release packages require a clean source tree. Commit all source changes and remove unintended untracked files." />
+    <Exec Command="git -C &quot;$(MSBuildThisFileDirectory)&quot; rev-parse --verify &quot;refs/tags/$(NavigationReleaseTag)^{commit}&quot;" ConsoleToMSBuild="true" StandardOutputImportance="Low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_NavigationTaggedRevision" />
+    </Exec>
+    <Error Condition="'$(_NavigationTaggedRevision)' != '$(SourceRevisionId)'"
+           Text="The release tag must identify the source revision being built." />
+  </Target>
+  <Target Name="ValidateNavigationReleaseSourceLink"
+          DependsOnTargets="ValidateNavigationReleaseMetadata"
+          Condition="'$(IsPackable)' == 'true' and '$(NavigationPublicRelease)' == 'true'">
+    <!-- Packing without a build does not populate SourceLink. Check each framework's existing build output. -->
+    <PropertyGroup>
+      <_NavigationSourceLinkFile Condition="'$(SourceLink)' != ''">$(SourceLink)</_NavigationSourceLinkFile>
+      <_NavigationSourceLinkFile Condition="'$(SourceLink)' == ''">$(IntermediateOutputPath)$(MSBuildProjectName).sourcelink.json</_NavigationSourceLinkFile>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(_NavigationSourceLinkFile)')"
+           Text="Release packages require generated Source Link metadata for $(TargetFramework). Build Release from committed source before packing." />
+    <ReadLinesFromFile File="$(_NavigationSourceLinkFile)">
+      <Output TaskParameter="Lines" PropertyName="_NavigationSourceLinkText" />
+    </ReadLinesFromFile>
+    <Error Condition="!$(_NavigationSourceLinkText.Contains('$(SourceRevisionId)'))"
+           Text="Source Link metadata for $(TargetFramework) does not match the current commit. Rebuild before packing." />
+  </Target>
+</Project>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<local:PlaygroundPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+                     xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+                     xmlns:local="clr-namespace:MVVMCompass.Sample"
+                     x:Class="MVVMCompass.Sample.DetailPage" x:ClassModifier="internal"
+                     x:TypeArguments="local:DetailViewModel"
+                     x:DataType="local:DetailViewModel"
+                     Title="Parameters and navigation">
+    <ScrollView>
+        <VerticalStackLayout x:Name="Actions" Padding="20" Spacing="12">
+            <Label Text="Compiled XAML consumer" FontSize="25" FontAttributes="Bold" />
+            <Label Text="{Binding Name}" />
+            <Label Text="{Binding ParameterSummary}" />
+        </VerticalStackLayout>
+    </ScrollView>
+</local:PlaygroundPage>

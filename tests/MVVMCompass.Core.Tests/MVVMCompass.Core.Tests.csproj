@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../../src/MVVMCompass.Core/MVVMCompass.Core.csproj" />
+  </ItemGroup>
+</Project>

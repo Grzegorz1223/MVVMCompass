@@ -1,0 +1,9 @@
+* text=auto eol=lf
+# Public API snapshots preserve the exact reflection formatter output.
+tests/MVVMCompass.Compatibility.Tests/Current*Api.txt whitespace=-blank-at-eol
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.sh text eol=lf
+*.ps1 text eol=lf

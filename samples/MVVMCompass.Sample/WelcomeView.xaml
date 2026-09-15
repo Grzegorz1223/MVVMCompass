@@ -1,0 +1,20 @@
+<nav:ViewBase xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+              xmlns:nav="clr-namespace:MVVMCompass;assembly=MVVMCompass"
+              xmlns:vm="clr-namespace:MVVMCompass.Sample"
+              x:Class="MVVMCompass.Sample.WelcomeView" x:TypeArguments="vm:WelcomeViewModel" x:DataType="vm:WelcomeViewModel"
+              Title="MVVMCompass">
+    <ScrollView>
+        <VerticalStackLayout Padding="24" Spacing="16">
+            <Label Text="Navigation starts in your ViewModel." FontSize="30" FontAttributes="Bold" />
+            <Label Text="Explore custom tabs, flyouts, persistent toolbars, and Toolkit popups. Every destination uses the same injected navigation service." />
+            <Button Text="Tabs • all four edges" Command="{Binding TabsCommand}" />
+            <Button Text="Flyout • nested tabs" Command="{Binding FlyoutCommand}" />
+            <Button Text="Plain view • custom toolbar" Command="{Binding PlainCommand}" />
+            <Button Text="Modal • independent history" Command="{Binding ModalCommand}" />
+            <Button Text="Toolkit popup • typed result" Command="{Binding PopupCommand}" />
+            <Button Text="Independent window" Command="{Binding WindowCommand}" />
+            <Label Text="{Binding Status}" />
+        </VerticalStackLayout>
+    </ScrollView>
+</nav:ViewBase>

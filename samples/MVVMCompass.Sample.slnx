@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="../src/MVVMCompass.Core/MVVMCompass.Core.csproj" />
+  <Project Path="../src/MVVMCompass.Maui/MVVMCompass.Maui.csproj" />
+  <Project Path="MVVMCompass.Sample/MVVMCompass.Sample.csproj" />
+</Solution>

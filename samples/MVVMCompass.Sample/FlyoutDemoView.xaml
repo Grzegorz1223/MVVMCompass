@@ -1,0 +1,30 @@
+<nav:FlyoutViewBase xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+                    xmlns:nav="clr-namespace:MVVMCompass;assembly=MVVMCompass"
+                    xmlns:vm="clr-namespace:MVVMCompass.Sample"
+                    x:Class="MVVMCompass.Sample.FlyoutDemoView" x:TypeArguments="vm:FlyoutDemoViewModel" x:DataType="vm:FlyoutDemoViewModel"
+                    SharedContentPosition="{Binding SharedPosition}"
+                    SelectedFlyoutItemTemplate="{StaticResource SelectedDestination}" UnselectedFlyoutItemTemplate="{StaticResource UnselectedDestination}">
+    <nav:FlyoutViewBase.FlyoutPanelBackground>
+        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#EDF3FA" Offset="0" /><GradientStop Color="#E4EBF5" Offset="1" /></LinearGradientBrush>
+    </nav:FlyoutViewBase.FlyoutPanelBackground>
+    <nav:FlyoutViewBase.ToolbarCenterContent><Entry Text="{Binding ToolbarText}" FontSize="14" /></nav:FlyoutViewBase.ToolbarCenterContent>
+    <nav:FlyoutViewBase.ToolbarItems><nav:ToolbarButton Text="Home" Command="{Binding HomeCommand}" AccessibilityLabel="Return to the playground" /></nav:FlyoutViewBase.ToolbarItems>
+    <nav:FlyoutViewBase.FlyoutHeaderContent>
+        <VerticalStackLayout Padding="18" Spacing="8"><Label Text="Your workspace" FontSize="24" FontAttributes="Bold" /><Label Text="Templates are visual. This list comes from the ViewModel." /></VerticalStackLayout>
+    </nav:FlyoutViewBase.FlyoutHeaderContent>
+    <nav:FlyoutViewBase.FlyoutFooterContent><Label Text="Shared menu footer" Padding="18" /></nav:FlyoutViewBase.FlyoutFooterContent>
+    <nav:FlyoutViewBase.SharedContent>
+        <Border Padding="10" Background="#F2F7EE" StrokeThickness="0">
+            <VerticalStackLayout Spacing="6">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <Label Text="Flyout shared panel" VerticalTextAlignment="Center" FontAttributes="Bold" />
+                    <Picker Grid.Column="1" ItemsSource="{Binding SharedPositions}" SelectedItem="{Binding SharedPosition}" />
+                </Grid>
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8"><Entry Text="{Binding DestinationId}" /><Button Grid.Column="1" Text="Select path" Command="{Binding SelectCommand}" /></Grid>
+                <Button Text="Add / remove Reports" Command="{Binding ToggleFeatureCommand}" />
+                <Label Text="{Binding Status}" FontSize="12" />
+            </VerticalStackLayout>
+        </Border>
+    </nav:FlyoutViewBase.SharedContent>
+</nav:FlyoutViewBase>

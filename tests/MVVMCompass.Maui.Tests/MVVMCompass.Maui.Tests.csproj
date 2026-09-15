@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../../src/MVVMCompass.Maui/MVVMCompass.Maui.csproj" />
+  </ItemGroup>
+</Project>

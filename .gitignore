@@ -1,0 +1,37 @@
+# Build, package, and verification output
+**/bin/
+**/obj/
+artifacts/
+**/TestResults/
+*.nupkg
+*.snupkg
+*.binlog
+*.log
+
+# IDE and operating system files
+.idea/
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local credentials and signing material
+.env
+.env.*
+!.env.example
+NuGet.Local.Config
+*.pfx
+*.p12
+*.keystore
+*.jks
+*.mobileprovision
+*.cer
+*.key
+
+# Script caches
+__pycache__/
+*.pyc

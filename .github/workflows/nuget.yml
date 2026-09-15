@@ -1,0 +1,226 @@
+name: Publish NuGet
+
+on:
+  release:
+    types: [published]
+  # For an existing release: gh workflow run nuget.yml --ref v1.0.0
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nuget-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish verified release packages
+    if: github.repository == 'Grzegorz1223/MVVMCompass'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: nuget
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Download and validate the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PACKAGES="$RUNNER_TEMP/nuget-packages"
+          echo "PACKAGES=$PACKAGES" >> "$GITHUB_ENV"
+          cat > "$RUNNER_TEMP/verify-nuget.py" <<'PY'
+          import hashlib
+          import io
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          import sys
+          import time
+          import urllib.error
+          import urllib.request
+          import xml.etree.ElementTree as ET
+          import zipfile
+
+          PACKAGE_IDS = ("MVVMCompass.Core", "MVVMCompass.Maui")
+          PACKAGES = Path(os.environ["PACKAGES"])
+
+          def require(condition, message):
+              if not condition:
+                  raise ValueError(message)
+
+          def release_version():
+              ref = os.environ["GITHUB_REF"]
+              match = re.fullmatch(r"refs/tags/v(\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?)", ref)
+              require(match, "Run this workflow from a version tag, for example: gh workflow run nuget.yml --ref v1.0.0")
+              return match.group(1)
+
+          def validate_release(version):
+              tag = f"v{version}"
+              repository = os.environ["GITHUB_REPOSITORY"]
+              commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+              require(commit == os.environ["GITHUB_SHA"], "Checkout does not match the triggering tag.")
+              expected = {f"{name}.{version}.{extension}"
+                          for name in PACKAGE_IDS for extension in ("nupkg", "snupkg")}
+              release = json.loads(subprocess.check_output([
+                  "gh", "release", "view", tag, "--repo", repository,
+                  "--json", "isDraft,tagName,assets"], text=True))
+              require(not release["isDraft"] and release["tagName"] == tag, "Expected a published release for this tag.")
+              assets = {asset["name"] for asset in release["assets"]}
+              archives = {name for name in assets if name.endswith((".nupkg", ".snupkg"))}
+              require(archives == expected and "manifest.json" in assets,
+                      "Attach both packages, both symbol packages, and manifest.json before publishing the GitHub release.")
+              PACKAGES.mkdir(parents=True, exist_ok=True)
+              command = ["gh", "release", "download", tag, "--repo", repository, "--dir", str(PACKAGES)]
+              for name in sorted(expected | {"manifest.json"}):
+                  command.extend(["--pattern", name])
+              subprocess.run(command, check=True)
+              manifest = json.loads((PACKAGES / "manifest.json").read_text())
+              require(manifest["version"] == version and manifest["commit"] == commit,
+                      "Release manifest version/commit does not match the tag. Prepare artifacts from the tagged source.")
+              require(manifest["publicRelease"] is True and manifest["sourceDirty"] is False,
+                      "Only verified packages from clean, tagged release source can be published.")
+              require(set(manifest["sha256"]) == expected, "Manifest must identify exactly the four release archives.")
+              for filename in sorted(expected):
+                  path = PACKAGES / filename
+                  require(hashlib.sha256(path.read_bytes()).hexdigest() == manifest["sha256"][filename],
+                          f"Release checksum mismatch: {filename}")
+                  name = next(name for name in PACKAGE_IDS if filename.startswith(name + "."))
+                  with zipfile.ZipFile(path) as archive:
+                      entries = archive.namelist()
+                      require(len(entries) == len(set(entries)), f"Duplicate ZIP entries: {filename}")
+                      specs = [entry for entry in entries if entry.endswith(".nuspec")]
+                      require(len(specs) == 1, f"Expected one nuspec: {filename}")
+                      metadata = ET.fromstring(archive.read(specs[0])).find("{*}metadata")
+                      require(metadata.findtext("{*}id") == name and metadata.findtext("{*}version") == version,
+                              f"Package identity/version mismatch: {filename}")
+                      source = metadata.find("{*}repository")
+                      require(source is not None and source.get("commit") == commit
+                              and source.get("url") == f"https://github.com/{repository}",
+                              f"Package repository/commit mismatch: {filename}")
+                      if filename.endswith(".snupkg"):
+                          require(any(entry.endswith(".pdb") for entry in entries), f"Missing symbols: {filename}")
+                      else:
+                          require(any(entry.startswith("lib/") and entry.endswith(".dll") for entry in entries),
+                                  f"Missing library assembly: {filename}")
+                      if name == "MVVMCompass.Maui":
+                          groups = metadata.findall("{*}dependencies/{*}group")
+                          require(groups and all(any(dependency.get("id") == "MVVMCompass.Core"
+                                  and dependency.get("version") in (version, f"[{version}]")
+                                  for dependency in group) for group in groups),
+                                  f"MAUI must depend on the matching Core version: {filename}")
+                  print(f"Verified release archive: {filename}", flush=True)
+              with open(os.environ["GITHUB_ENV"], "a") as environment:
+                  environment.write(f"PACKAGE_VERSION={version}\n")
+
+          def public_payload(name, version):
+              package = name.lower()
+              version = version.lower()
+              url = f"https://api.nuget.org/v3-flatcontainer/{package}/{version}/{package}.{version}.nupkg"
+              try:
+                  with urllib.request.urlopen(url, timeout=30) as response:
+                      return response.read()
+              except urllib.error.HTTPError as error:
+                  if error.code == 404:
+                      return None
+                  raise
+
+          def compare_payload(name, version, payload):
+              with zipfile.ZipFile(PACKAGES / f"{name}.{version}.nupkg") as expected, \
+                      zipfile.ZipFile(io.BytesIO(payload)) as actual:
+                  # NuGet.org adds a repository signature and can update ZIP content-type metadata.
+                  ignored = {".signature.p7s", "[Content_Types].xml"}
+                  require(len(actual.namelist()) == len(set(actual.namelist())), f"Duplicate public ZIP entries: {name}")
+                  entries = set(expected.namelist()) - ignored
+                  require(entries == set(actual.namelist()) - ignored, f"Conflicting package already on NuGet.org: {name}")
+                  for entry in entries:
+                      require(expected.read(entry) == actual.read(entry), f"NuGet.org payload differs: {name}/{entry}")
+
+          def verify_public(version, wait):
+              pending = set(PACKAGE_IDS)
+              deadline = time.monotonic() + (600 if wait else 0)
+              while pending:
+                  for name in sorted(pending):
+                      payload = public_payload(name, version)
+                      if payload is not None:
+                          compare_payload(name, version, payload)
+                          pending.remove(name)
+                          print(f"Verified NuGet.org package: {name}/{version}", flush=True)
+                  if not pending or not wait:
+                      return
+                  require(time.monotonic() < deadline,
+                          f"NuGet.org indexing is still pending for {sorted(pending)}. Rerun this job after indexing completes.")
+                  print(f"Waiting for NuGet.org indexing: {', '.join(sorted(pending))}", flush=True)
+                  time.sleep(15)
+
+          if __name__ == "__main__":
+              version = release_version()
+              if sys.argv[1] == "release":
+                  validate_release(version)
+                  verify_public(version, wait=False)
+              elif sys.argv[1] == "published":
+                  verify_public(version, wait=True)
+              else:
+                  raise ValueError("Unknown verification mode.")
+          PY
+          python3 "$RUNNER_TEMP/verify-nuget.py" release
+
+      - name: Select NuGet authentication
+        id: auth
+        env:
+          NUGET_USER: ${{ vars.NUGET_USER }}
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "$NUGET_USER" ]]; then
+            echo "method=trusted" >> "$GITHUB_OUTPUT"
+          elif [[ -n "$NUGET_API_KEY" ]]; then
+            echo "method=api-key" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Configure the NUGET_USER variable and a NuGet Trusted Publishing policy for nuget.yml/environment nuget, or set the NUGET_API_KEY secret."
+            exit 1
+          fi
+
+      - name: Log in to NuGet with Trusted Publishing
+        if: steps.auth.outputs.method == 'trusted'
+        id: login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - name: Publish Core, MAUI, and their symbols
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY || secrets.NUGET_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$NUGET_API_KEY"
+          for package in MVVMCompass.Core MVVMCompass.Maui; do
+            # Push symbols explicitly so a retry also recovers a partial symbol upload.
+            dotnet nuget push "$PACKAGES/$package.$PACKAGE_VERSION.nupkg" \
+              --source https://api.nuget.org/v3/index.json \
+              --api-key "$NUGET_API_KEY" --skip-duplicate --no-symbols
+            dotnet nuget push "$PACKAGES/$package.$PACKAGE_VERSION.snupkg" \
+              --source https://api.nuget.org/v3/index.json \
+              --api-key "$NUGET_API_KEY" --skip-duplicate
+          done
+
+      - name: Verify the indexed NuGet.org package contents
+        shell: bash
+        run: python3 "$RUNNER_TEMP/verify-nuget.py" published

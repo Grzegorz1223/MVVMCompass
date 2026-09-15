@@ -1,0 +1,41 @@
+<nav:TabbedViewBase xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+                    xmlns:nav="clr-namespace:MVVMCompass;assembly=MVVMCompass"
+                    xmlns:vm="clr-namespace:MVVMCompass.Sample"
+                    x:Class="MVVMCompass.Sample.TabsDemoView" x:TypeArguments="vm:TabsDemoViewModel" x:DataType="vm:TabsDemoViewModel"
+                    TabBarPosition="{Binding TabPosition}" TabItemSizing="{Binding ItemSizing}" SharedContentPosition="{Binding SharedPosition}"
+                    SelectedTabItemTemplate="{StaticResource SelectedDestination}" UnselectedTabItemTemplate="{StaticResource UnselectedDestination}">
+    <nav:TabbedViewBase.TabBarBackground>
+        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#DDECF8" Offset="0" /><GradientStop Color="#EEE4F5" Offset="1" /></LinearGradientBrush>
+    </nav:TabbedViewBase.TabBarBackground>
+    <nav:TabbedViewBase.ToolbarCenterContent>
+        <Entry Text="{Binding ToolbarText}" Placeholder="Persistent toolbar" FontSize="14" />
+    </nav:TabbedViewBase.ToolbarCenterContent>
+    <nav:TabbedViewBase.ToolbarItems>
+        <nav:ToolbarButton Text="Home" Command="{Binding HomeCommand}" AccessibilityLabel="Return to the playground" />
+        <nav:ToolbarButton Text="Popup" Command="{Binding PopupCommand}" AccessibilityLabel="Open a Toolkit popup" />
+    </nav:TabbedViewBase.ToolbarItems>
+    <nav:TabbedViewBase.TabBarCenterContent><Label Text="◆" Padding="8" VerticalTextAlignment="Center" /></nav:TabbedViewBase.TabBarCenterContent>
+    <nav:TabbedViewBase.TabBarTrailingContent><Label Text="＋" Padding="8" VerticalTextAlignment="Center" /></nav:TabbedViewBase.TabBarTrailingContent>
+    <nav:TabbedViewBase.SharedContent>
+        <Border Padding="10" StrokeThickness="0" Background="#EEF6FC">
+            <VerticalStackLayout Spacing="6">
+                <Label Text="Tab layout · shared controls stay here" FontAttributes="Bold" />
+                <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
+                    <Picker Title="Edge" ItemsSource="{Binding TabPositions}" SelectedItem="{Binding TabPosition}" />
+                    <Picker Grid.Column="1" Title="Sizing" ItemsSource="{Binding ItemSizes}" SelectedItem="{Binding ItemSizing}" />
+                    <Picker Grid.Column="2" Title="Shared panel" ItemsSource="{Binding SharedPositions}" SelectedItem="{Binding SharedPosition}" />
+                </Grid>
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <Entry Text="{Binding DestinationId}" Placeholder="Select a destination ID" />
+                    <Button Grid.Column="1" Text="Select ID" Command="{Binding SelectCommand}" />
+                </Grid>
+                <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                    <Button Text="Toggle Reports" Command="{Binding ToggleFeatureCommand}" />
+                    <Button Grid.Column="1" Text="Toggle overflow" Command="{Binding ToggleOverflowCommand}" />
+                </Grid>
+                <Label Text="{Binding Status}" FontSize="12" />
+            </VerticalStackLayout>
+        </Border>
+    </nav:TabbedViewBase.SharedContent>
+</nav:TabbedViewBase>

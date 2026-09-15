@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/MVVMCompass.Core/MVVMCompass.Core.csproj" />
+    <Project Path="src/MVVMCompass.Maui/MVVMCompass.Maui.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/MVVMCompass.Core.Tests/MVVMCompass.Core.Tests.csproj" />
+    <Project Path="tests/MVVMCompass.Maui.Tests/MVVMCompass.Maui.Tests.csproj" />
+    <Project Path="tests/MVVMCompass.Compatibility.Tests/MVVMCompass.Compatibility.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework />
+    <TargetFrameworks>net10.0;net10.0-android</TargetFrameworks>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">23.0</SupportedOSPlatformVersion>
+    <AssemblyName>MVVMCompass</AssemblyName>
+    <RootNamespace>MVVMCompass</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackageId Condition="'$(NavigationMauiPackageId)' == ''">MVVMCompass.Maui</PackageId>
+    <PackageId Condition="'$(NavigationMauiPackageId)' != ''">$(NavigationMauiPackageId)</PackageId>
+    <Description>Unified MAUI navigation, retained tabs and flyouts, popups, windows and MVVM presentation helpers.</Description>
+    <Authors>MVVMCompass contributors</Authors>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../MVVMCompass.Core/MVVMCompass.Core.csproj" GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;TargetFrameworks" />
+    <PackageReference Include="CommunityToolkit.Maui" Version="15.0.1" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.101" />
+    <InternalsVisibleTo Include="MVVMCompass.Maui.Tests" />
+    <InternalsVisibleTo Include="MVVMCompass.Sample" />
+    <InternalsVisibleTo Include="MVVMCompass.Compatibility.Tests" />
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

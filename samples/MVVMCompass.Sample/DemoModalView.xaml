@@ -1,0 +1,19 @@
+<nav:ViewBase xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+              xmlns:nav="clr-namespace:MVVMCompass;assembly=MVVMCompass"
+              xmlns:vm="clr-namespace:MVVMCompass.Sample"
+              x:Class="MVVMCompass.Sample.DemoModalView" x:TypeArguments="vm:DemoModalViewModel" x:DataType="vm:DemoModalViewModel" Title="Modal scope">
+    <ScrollView>
+        <VerticalStackLayout Padding="16" Spacing="12">
+            <Label Text="{Binding Caption}" FontSize="26" FontAttributes="Bold" />
+            <Label Text="{Binding InstanceId, StringFormat='Instance: {0}'}" FontSize="11" />
+            <Entry Placeholder="Type here, navigate away, then return" />
+            <HorizontalStackLayout Spacing="8"><Switch IsToggled="{Binding AllowNavigation}" /><Label Text="Allow navigation (CanNavigate)" VerticalTextAlignment="Center" /></HorizontalStackLayout>
+            <Button Text="Push another detail" Command="{Binding DetailCommand}" />
+            <Button Text="Open modal" Command="{Binding ModalCommand}" />
+            <Button Text="Open Toolkit popup" Command="{Binding PopupCommand}" />
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="8"><Button Text="Back" Command="{Binding BackCommand}" /><Button Grid.Column="1" Text="Back to root" Command="{Binding RootCommand}" /></Grid>
+            <Label Text="{Binding Status}" />
+        </VerticalStackLayout>
+    </ScrollView>
+</nav:ViewBase>
