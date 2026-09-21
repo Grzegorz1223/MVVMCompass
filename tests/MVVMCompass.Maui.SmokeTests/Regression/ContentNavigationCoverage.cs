@@ -146,9 +146,11 @@ internal sealed class ContentNavigationCoverage(MauiNavigationHost host, Action<
         var scroller = Descendants(toolbar).OfType<ScrollView>().Single();
         var title = Descendants(toolbar).OfType<Label>().Single(label => label.Text == "Actions");
         var toolbarBounds = NativeCoveragePlatform.Bounds(toolbar); var titleBounds = NativeCoveragePlatform.Bounds(title);
-        Check(Math.Abs(titleBounds.Center.X - toolbarBounds.Center.X) <= 1,
-            $"center remains centered at narrow width, template={templated}; toolbar={toolbarBounds}, title={titleBounds}, right={NativeCoveragePlatform.Bounds(scroller)}");
-        Check(scroller.Width <= toolbar.Width * .4 + 1 && scroller.Content.Width > scroller.Width, "right actions have bounded horizontal overflow");
+        var navigationBounds = NativeCoveragePlatform.Bounds(Descendants(toolbar).OfType<Button>().Single(input => ReferenceEquals(input.Command, toolbar.LeadingCommand)));
+        Check(titleBounds.Left >= navigationBounds.Right - 1 && titleBounds.Left - navigationBounds.Right <= 5 && titleBounds.Width >= 55,
+            $"compact title reclaims unused leading space, template={templated}; toolbar={toolbarBounds}, title={titleBounds}, right={NativeCoveragePlatform.Bounds(scroller)}");
+        Check(scroller.Width < toolbar.Width - navigationBounds.Width - titleBounds.Width && scroller.Content.Width > scroller.Width,
+            "right actions have bounded horizontal overflow alongside leading and title content");
         Check(titleBounds.Right <= NativeCoveragePlatform.Bounds(scroller).Left + 1, "center does not overlap right action area");
         await scroller.ScrollToAsync(scroller.Content.Width, 0, false);
         await FramesAsync(); Check(scroller.ScrollX > 0, "overflow actions can be scrolled into view");

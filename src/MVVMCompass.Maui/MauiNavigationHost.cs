@@ -34,12 +34,28 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
         this.scopeFactory = scopeFactory;
         composition = new(locator, options, window) { ResolveOwnedView = ResolveOwnedView, ComposeRetained = ComposeRetainedAsync };
         var dispatcher = window.Dispatcher ?? throw new InvalidOperationException("The window requires an owning MAUI dispatcher.");
-        coordinator = new(callback => dispatcher.DispatchAsync(callback));
+        coordinator = new(callback => DispatchNavigationAsync(dispatcher, callback));
+        coordinator.Settled += NotifyDeferredPopups;
         window.Destroying += WindowDestroying;
         window.PropertyChanged += WindowPropertyChanged;
         window.ModalPopped += WindowModalPopped;
         window.ModalPopping += ContentModalPopping;
         window.ModalPushed += WindowModalPushed;
+    }
+
+    private static Task DispatchNavigationAsync(IDispatcher dispatcher, Func<Task> callback)
+    {
+        var dispatched = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            if (!dispatcher.Dispatch(async () =>
+            {
+                try { await callback(); dispatched.TrySetResult(); }
+                catch (Exception error) { dispatched.TrySetException(error); }
+            })) dispatched.TrySetException(new InvalidOperationException("The window dispatcher rejected navigation."));
+        }
+        catch (Exception error) { dispatched.TrySetException(error); }
+        return dispatched.Task;
     }
 
     /// <summary>Gets the explicitly bound window; requests never select Application.Windows[0].</summary>
@@ -151,15 +167,22 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
         NavigationRequest<TParameter> request,
         Func<RootPreparation, Action<NavigationEntry<TViewModel>>, Task<Page>> create,
         Func<NavigationEntry<TViewModel>, TParameter, CancellationToken, Task> initialize,
-        bool navigable, CancellationToken cancellationToken) where TViewModel : class
+        bool navigable, CancellationToken cancellationToken, RootTransitionMode? applicationMode = null, bool submitted = false,
+        Func<CancellationToken, Task>? prepare = null) where TViewModel : class
     {
+        if (IsClosed) return new(applicationMode == null ? NavigationStatus.Cancelled : NavigationStatus.InvalidOrigin, null, false);
+        if (!submitted && IsContentCallback) return new(NavigationStatus.Reentrant, null, false);
         var legacyReentrant = RootOperationGate.IsLegacyReentrant(Window);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, closingToken);
-        return await coordinator.RunAsync(request, async context =>
+        return await (submitted ? coordinator.SubmitAsync(request, ExecuteAsync, linked.Token)
+            : coordinator.RunAsync(request, ExecuteAsync, linked.Token));
+
+        async Task<MauiNavigationRoot<TViewModel>> ExecuteAsync(NavigationOperationContext<TParameter> context)
         {
             using var callbackScope = NavigationCallbackScope.Enter(this);
             if (legacyReentrant) throw new InvalidOperationException("A legacy root callback cannot await another root on its window.");
             using var gate = await RootOperationGate.EnterAsync(Window, context.CancellationToken);
+            if (IsClosed) context.Reject(NavigationStatus.InvalidOrigin);
             var oldRoot = Window.Page;
             var oldOwned = CurrentRoot;
             var application = Application.Current;
@@ -175,7 +198,11 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
             try
             {
                 context.CancellationToken.ThrowIfCancellationRequested();
-                if (CurrentContentNavigation is { } outgoingContent) await outgoingContent.GuardRootAsync(context, request.Origin);
+                if (applicationMode == RootTransitionMode.Normal) await GuardWindowRootAsync(context, oldRoot, oldOwned?.Entry);
+                else if (applicationMode == null && CurrentContentNavigation is { } outgoingContent)
+                    await outgoingContent.GuardRootAsync(context, request.Origin);
+                if (prepare != null) await prepare(context.CancellationToken);
+                context.CancellationToken.ThrowIfCancellationRequested();
                 var content = await create(preparation, owned => entry = context.Own(owned));
                 candidate = new(navigable ? new NavigationPage(content) : content, content, entry!);
                 TrackRoot(candidate);
@@ -185,7 +212,8 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
                 var outgoing = ViewModelTree.Collect(oldRoot, true);
                 preparation.Validate(outgoing);
                 context.BeginCommit();
-                await DismissTreeAsync(oldRoot, oldOwned?.Entry, outgoing, DismissalReason.RootReplaced);
+                await DismissTreeAsync(oldRoot, oldOwned?.Entry, outgoing, DismissalReason.RootReplaced,
+                    applicationMode == null ? null : context.RecordCleanupError, dismissModals: applicationMode != null);
                 ValidateWindow(oldRoot, application, wasRegistered);
                 preparation.FinishPreparation();
                 NativeNavigationObserver.AttachApplication();
@@ -207,6 +235,8 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
                 ObserveNativeTree();
                 if (IsClosed || !ReferenceEquals(Window.Page, candidate.Page) || entry.Lifetime.IsDismissed)
                     throw new InvalidOperationException("The root was removed during activation.");
+                // Publish the final entry state before releasing this operation to the next root.
+                CurrentContentNavigation?.RefreshState();
                 return candidate;
             }
             catch (Exception error)
@@ -226,7 +256,8 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
                 try
                 {
                     if (candidate == null || !ReferenceEquals(Window.Page, candidate.Page))
-                        await DismissTreeAsync(candidate?.Page, entry, preparation.OwnedModels, DismissalReason.PreparationFailed);
+                        await DismissTreeAsync(candidate?.Page, entry, preparation.OwnedModels, DismissalReason.PreparationFailed,
+                            applicationMode == null ? null : context.RecordCleanupError);
                 }
                 finally
                 {
@@ -235,7 +266,21 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
                     execution.Value = parent;
                 }
             }
-        }, linked.Token);
+        }
+    }
+
+    private async Task GuardWindowRootAsync<T>(NavigationOperationContext<T> operation, Page? root, NavigationEntry? rootEntry)
+    {
+        var models = OwnedWithin(root, rootEntry).Select(item => item.Entry.ViewModel).OfType<NavigationContext>()
+            .SelectMany(context => context.AllScreens()).Select(screen => screen.ViewModel)
+            .Concat(ViewModelTree.Collect(root, true)).Distinct().ToArray();
+        foreach (var model in models)
+        {
+            operation.CancellationToken.ThrowIfCancellationRequested();
+            if (model.IsDismissed) continue;
+            if (!await model.CanNavigate()) operation.Reject(NavigationStatus.GuardRejected);
+            operation.CancellationToken.ThrowIfCancellationRequested();
+        }
     }
 
     private void ValidateWindow(Page? expected, Application? application, bool wasRegistered)
@@ -258,7 +303,7 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
     }
 
     private async Task DismissTreeAsync(Page? page, NavigationEntry? entry,
-        IEnumerable<ViewModelBase> models, DismissalReason reason)
+        IEnumerable<ViewModelBase> models, DismissalReason reason, Action<Exception>? recordError = null, bool dismissModals = false)
     {
         var tracked = OwnedWithin(page, entry);
         var retained = RetainedWithin(page, tracked);
@@ -275,14 +320,32 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
             .Concat(entry == null ? [] : new[] { entry.Lifetime }).Distinct().ToArray();
         foreach (var lifetime in lifetimes) lifetime.MarkDismissed(reason);
         SignalLifetimes(lifetimes);
+        Exception? modalError = null;
+        if (dismissModals)
+        {
+            containerMutation++;
+            try
+            {
+                while (Window.Navigation.ModalStack.LastOrDefault() is { } modal)
+                {
+                    if (PopupOwnership.IsPopupPage(modal)) await PopupOwnership.CloseTopAsync(Window);
+                    else await Window.Navigation.PopModalAsync(false);
+                    if (Window.Navigation.ModalStack.Contains(modal))
+                        throw new InvalidOperationException("The outgoing modal could not be removed during root replacement.");
+                }
+                await FinishNativeRemovalAsync();
+            }
+            catch (Exception error) { modalError = error; }
+            finally { containerMutation--; }
+        }
         if (page != null)
             try { await PopupOwnership.EndForRootAsync(Window, page, reason); }
-            catch (Exception error) { NavigationDiagnostics.Report(error, $"Window popup cleanup ({reason})"); }
+            catch (Exception error) { recordError?.Invoke(error); NavigationDiagnostics.Report(error, $"Window popup cleanup ({reason})"); }
         try
         {
             await NavigationLifetimeGroup.DismissAsync(lifetimes, reason);
         }
-        catch (Exception error) { NavigationDiagnostics.Report(error, $"Window root cleanup ({reason})"); }
+        catch (Exception error) { recordError?.Invoke(error); NavigationDiagnostics.Report(error, $"Window root cleanup ({reason})"); }
         finally
         {
             composition.UnwireScopedSubscriptions(owned.Concat(tracked.SelectMany(item => ViewModelTree.Collect(item.Content))));
@@ -291,7 +354,8 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
             if (page is NavigationPage navigation) NativeNavigationObserver.Detach(navigation);
         }
         foreach (var error in lifetimes.SelectMany(lifetime => lifetime.CancellationErrors))
-            NavigationDiagnostics.Report(error, "Window root cancellation");
+        { recordError?.Invoke(error); NavigationDiagnostics.Report(error, "Window root cancellation"); }
+        if (modalError != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(modalError).Throw();
     }
 
     private async void WindowPropertyChanged(object? sender, PropertyChangedEventArgs args)
@@ -380,6 +444,7 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
                     using var cancellationCallbacks = NavigationCallbackScope.ProtectCancellation();
                     try { closing.Cancel(); }
                     catch (AggregateException error) { NavigationDiagnostics.Report(error, "Navigation window cancellation"); }
+                    NotifyDeferredPopups();
                     SignalLifetimes(lifetimes);
                 });
                 await WaitForPopupPreparationsAsync();
@@ -403,7 +468,7 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
                 completion.TrySetResult();
             }
             catch (Exception error) { completion.TrySetException(error); }
-            finally { closing.Dispose(); }
+            finally { closing.Dispose(); coordinator.Settled -= NotifyDeferredPopups; }
         }
     }
 

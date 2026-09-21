@@ -19,7 +19,7 @@ public sealed class SmokeRunner(IServiceProvider services, MauiNavigationHostFac
         try
         {
             Check(MainThread.IsMainThread, "Unified: native UI dispatcher");
-            if (suite != "unified")
+            if (suite is not ("unified" or "ui" or "tabs"))
             {
                 var regression = services.GetRequiredService<RegressionSmokeRunner>();
                 await regression.RunAsync(writeReport: false);
@@ -30,7 +30,19 @@ public sealed class SmokeRunner(IServiceProvider services, MauiNavigationHostFac
             var registry = services.GetRequiredService<MVVMCompass.Services.RegisteredScreenFactory>();
             var root = await host.ReplaceContentRootAsync(new(registry.Definition(typeof(WelcomeViewModel))));
             Check(root.IsSuccess, "Unified: initialize registered XAML sample");
-            await new UnifiedNativeCoverage(host, Check).RunAsync();
+            if (suite is not ("ui" or "tabs"))
+            {
+                await new UnifiedNativeCoverage(host, Check).RunAsync();
+                await new UnifiedNativeCoverage(host, Check).ApplicationRootsAsync(factory);
+                await new UnifiedNativeCoverage(host, Check).DeferredPopupsAsync(services.GetRequiredService<PopupLifecycleProbe>(), factory);
+            }
+            if (suite != "ui")
+                await new UnifiedNativeCoverage(host, Check).TabRegressionsAsync(services.GetRequiredService<PopupLifecycleProbe>(), factory);
+            if (suite != "tabs")
+            {
+                await new UnifiedNativeCoverage(host, Check).UiRegressionsAsync();
+                await new UnifiedNativeCoverage(host, Check).BusyLoadingAsync();
+            }
         }
         catch (Exception error) { failure = error.ToString(); log.Write("SMOKE FAILED: " + error); }
         var report = JsonSerializer.Serialize(new SmokeResult(failure == null ? "passed" : "failed", checks, failure,
@@ -153,15 +165,15 @@ internal sealed partial class UnifiedNativeCoverage(MauiNavigationHost host, Act
             await Ready(root.View.Toolbar);
             root.View.Toolbar.LeadingCommand.Execute(null);
             await Until(() => child.IsFlyoutOpen);
-            var selector = Descendants(child.View).OfType<NavigationSelector>().Single(item => ReferenceEquals(item.ItemsSource, child.MenuItems));
+            var selector = Descendants(root.View).OfType<NavigationSelector>().Single(item => ReferenceEquals(item.ItemsSource, child.MenuItems));
             await Ready(selector);
+            Check(Descendants(root.View).OfType<Grid>().Any(grid => ReferenceEquals(grid.Background, view.FlyoutPanelBackground)), $"flyout/{position}: panel background");
             var button = Descendants(selector).OfType<Button>().Single(item => item.AutomationId == "destination-shared");
             NativeCoveragePlatform.TapAt(button);
             await Until(() => child.SelectedDestinationId == "shared" && !child.IsFlyoutOpen && !root.IsNavigating);
             Check(Current.Caption == "Shared documents" && !ReferenceEquals(personal, Current), $"flyout/{position}: native item input, parameters, and ID");
             Check(ReferenceEquals(shared, view.SharedContent) && ReferenceEquals(shared!.BindingContext, parent), $"flyout/{position}: detail shared content retains parent");
             CheckSharedPlacement(child.View, shared!, position, $"flyout/{position}");
-            Check(Descendants(child.View).OfType<Grid>().Any(grid => ReferenceEquals(grid.Background, view.FlyoutPanelBackground)), $"flyout/{position}: panel background");
         }
         await parent.ToggleFeatureCommand.ExecuteAsync(null);
         Success(await parent.Navigation.Select("reports"), "select dynamically added flyout item");

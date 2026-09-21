@@ -104,14 +104,16 @@ internal static class NativeCoveragePlatform
     {
 #if ANDROID
         var view = (Android.Views.View)target.Handler!.PlatformView!;
-        var activity = (Android.App.Activity)target.Window.Handler!.PlatformView!;
+        // A modal page has its own native window. Dispatch through the target's
+        // root so the touch reaches that window instead of the covered activity.
+        var root = view.RootView!;
         int[] position = new int[2]; view.GetLocationOnScreen(position);
-        int[] origin = new int[2]; activity.Window!.DecorView!.GetLocationOnScreen(origin);
+        int[] origin = new int[2]; root.GetLocationOnScreen(origin);
         var x = position[0] - origin[0] + view.Width / 2f; var y = position[1] - origin[1] + view.Height / 2f;
         var now = Android.OS.SystemClock.UptimeMillis();
         using var down = Android.Views.MotionEvent.Obtain(now, now, Android.Views.MotionEventActions.Down, x, y, 0);
         using var up = Android.Views.MotionEvent.Obtain(now, now + 10, Android.Views.MotionEventActions.Up, x, y, 0);
-        activity.DispatchTouchEvent(down); activity.DispatchTouchEvent(up);
+        root.DispatchTouchEvent(down); root.DispatchTouchEvent(up);
 #elif IOS
         var view = (UIKit.UIView)target.Handler!.PlatformView!;
         var point = Bounds(target).Center;

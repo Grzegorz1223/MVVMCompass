@@ -612,7 +612,7 @@ public sealed class ContentNavigationTests : IAsyncDisposable
         Assert.Equal("Updated spoken label", SemanticProperties.GetDescription(button));
         var icon = new FontImageSource { Glyph = "+" };
         item.Icon = icon;
-        Assert.Same(icon, button.ImageSource);
+        Assert.Same(icon, templated ? button.ImageSource : Assert.Single(Descendants(button.Parent).OfType<Image>()).Source);
         model.ActionEnabled = false;
         Assert.False(button.IsEnabled); Assert.False(button.Command.CanExecute(button.CommandParameter));
         received = null; button.Command.Execute(button.CommandParameter); Assert.Null(received);

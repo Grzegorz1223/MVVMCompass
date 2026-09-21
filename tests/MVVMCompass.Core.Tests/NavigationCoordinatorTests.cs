@@ -9,6 +9,26 @@ public sealed class NavigationCoordinatorTests
     private static async Task<T> Done<T>(Task<T> task) => await task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
 
     [Fact]
+    public async Task Settlement_is_observed_after_failed_preparation_cleanup_and_callback_exit()
+    {
+        var coordinator = new NavigationCoordinator(); var entered = Signal(); var release = Signal(); var settled = Signal();
+        var candidate = coordinator.CreateEntry(new Model(), async () => { entered.TrySetResult(); await release.Task; });
+        var activeAtSettlement = true; var busyAtSettlement = true;
+        coordinator.Settled += () =>
+        {
+            activeAtSettlement = NavigationCallbackScope.IsActive(coordinator);
+            busyAtSettlement = coordinator.IsBusy; settled.TrySetResult();
+        };
+        var operation = coordinator.RunAsync<int, int>(new(0), context =>
+        { context.Own(candidate); throw new InvalidOperationException("preparation"); }, TestContext.Current.CancellationToken);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        Assert.False(settled.Task.IsCompleted); release.TrySetResult();
+        Assert.Equal(NavigationStatus.Failed, (await Done(operation)).Status);
+        await settled.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        Assert.False(activeAtSettlement); Assert.False(busyAtSettlement); Assert.Equal(1, candidate.ViewModel.Dismissals);
+    }
+
+    [Fact]
     public async Task Ordinary_requests_execute_in_arrival_order_and_return_typed_values()
     {
         var coordinator = new NavigationCoordinator();
@@ -391,6 +411,22 @@ public sealed class NavigationCoordinatorTests
         }, TestContext.Current.CancellationToken);
         Assert.True(next.IsSuccess);
         Assert.False(inside);
+    }
+
+    [Fact]
+    public async Task Submitted_dispatch_failure_settles_and_does_not_poison_later_requests()
+    {
+        var calls = 0;
+        var coordinator = new NavigationCoordinator(async callback =>
+        {
+            if (Interlocked.Increment(ref calls) == 1) throw new InvalidOperationException("dispatcher unavailable");
+            await callback();
+        });
+        var failed = await coordinator.SubmitAsync(new NavigationRequest<int>(0), _ => Task.FromResult(0), TestContext.Current.CancellationToken);
+        Assert.Equal(NavigationStatus.Failed, failed.Status);
+        Assert.False(failed.HasCommitted); Assert.Equal("dispatcher unavailable", failed.Error!.Message);
+        var next = await coordinator.SubmitAsync(new NavigationRequest<int>(1), _ => Task.FromResult(1), TestContext.Current.CancellationToken);
+        Assert.True(next.IsSuccess); Assert.Equal(1, next.Value);
     }
 
     [Fact]

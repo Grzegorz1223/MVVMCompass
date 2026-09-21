@@ -10,6 +10,7 @@ internal sealed partial class NavigationContext
     internal NavigationContext RootContext => ParentContext?.RootContext ?? this;
     internal NavigationContext Deepest => Current?.Children?.Deepest ?? this;
     private bool embeddedFlyoutOpen;
+    internal bool HasOpenFlyout => IsFlyoutOpen || Current?.Children?.HasOpenFlyout == true;
     private ViewModelBase? notifiedSelection;
     private async Task NotifySelectionAsync()
     {
@@ -90,13 +91,14 @@ internal sealed partial class NavigationContext
                 else state.Definition = destination;
                 if (!items.TryGetValue(destination.Id, out var item))
                     items.Add(destination.Id, item = new(destination, new Command(async () => await ReportAsync(SelectAsync(destination.Id,
-                        options: new() { Origin = Current?.Entry, RejectIfBusy = true })), () => IsActive && !IsNavigating && items[destination.Id].IsEnabled && items[destination.Id].IsVisible)));
+                        options: new() { Origin = Current?.Entry, RejectIfBusy = true })), () => IsActive && !IsNavigating &&
+                            items.TryGetValue(destination.Id, out var currentItem) && currentItem.IsEnabled && currentItem.IsVisible)));
                 item.Destination = destination; item.IsVisible = destination.Item?.IsVisible ?? true; item.IsEnabled = destination.Item?.IsEnabled ?? true;
                 item.RefreshMetadata();
             }
             active = nextState;
             if (candidate != null) active.Stack.Add(candidate);
-            menu.Clear(); if (HasFlyout) foreach (var destination in definition.Destinations) menu.Add(items[destination.Id]);
+            menu.ReplaceWith(HasFlyout ? definition.Destinations.Select(destination => items[destination.Id]) : []);
             foreach (var screen in removed) screen.Entry.Lifetime.MarkDismissed(DismissalReason.Removed);
             Publish();
             try { if (changesActive || candidate != null) await View.Presenter.PresentAsync(Current!.View, false); }

@@ -32,6 +32,7 @@
   <ItemGroup>
     <Compile Include="../../tests/MVVMCompass.Maui.SmokeTests/**/*.cs" />
     <MauiXaml Include="../../tests/MVVMCompass.Maui.SmokeTests/**/*.xaml" />
+    <MauiImage Include="../../tests/MVVMCompass.Maui.SmokeTests/Assets/*.svg" />
     <ProjectReference Include="../../src/MVVMCompass.Maui/MVVMCompass.Maui.csproj" Condition="'$(NavigationUsePackages)' != 'true'" GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;TargetFrameworks" />
     <PackageReference Include="$(NavigationMauiPackageId)" Version="$(NavigationPackageVersion)" Condition="'$(NavigationUsePackages)' == 'true'" />
     <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />

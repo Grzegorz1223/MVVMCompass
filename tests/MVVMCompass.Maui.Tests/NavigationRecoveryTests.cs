@@ -111,7 +111,8 @@ public sealed partial class UnifiedNavigationTests
         var (context, _, replace) = await OpenRemovalContainer(flyout);
         Success(await replace([Item("open"), Item("archive")]));
         var child = context.Current!.Children!;
-        var selector = flyout ? Descendants(child.View).OfType<NavigationSelector>()
+        if (flyout) child.SetFlyout(true);
+        var selector = flyout ? Descendants(context.View).OfType<NavigationSelector>()
             .Single(item => ReferenceEquals(item.ItemsSource, child.MenuItems)) : child.View.TabSelector;
         var input = Descendants(selector).OfType<Button>().Single(item => item.AutomationId == "destination-open");
         var current = context.Deepest.Current;

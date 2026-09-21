@@ -53,6 +53,21 @@ public abstract class ContainerViewBase : ViewBase, IContainerView
     public static readonly BindableProperty TabItemSizingProperty = BindableProperty.Create(nameof(TabItemSizing), typeof(TabItemSizing), typeof(ContainerViewBase), TabItemSizing.Content, propertyChanged: Changed, validateValue: (_, value) => Enum.IsDefined((TabItemSizing)value));
     /// <summary>Natural or equal sizing of visible tabs.</summary>
     public TabItemSizing TabItemSizing { get => (TabItemSizing)GetValue(TabItemSizingProperty); set => SetValue(TabItemSizingProperty, value); }
+    /// <summary>Identifies padding around the tab strip's items and additional content.</summary>
+    public static readonly BindableProperty TabBarPaddingProperty = BindableProperty.Create(nameof(TabBarPadding), typeof(Thickness), typeof(ContainerViewBase), new Thickness(4), propertyChanged: Changed,
+        validateValue: (_, value) => value is Thickness padding && double.IsFinite(padding.Left) && padding.Left >= 0 && double.IsFinite(padding.Top) && padding.Top >= 0 && double.IsFinite(padding.Right) && padding.Right >= 0 && double.IsFinite(padding.Bottom) && padding.Bottom >= 0);
+    /// <summary>Gets or sets tab-strip insets on every edge. The default is 4; zero removes the insets.</summary>
+    public Thickness TabBarPadding { get => (Thickness)GetValue(TabBarPaddingProperty); set => SetValue(TabBarPaddingProperty, value); }
+    /// <summary>Identifies spacing between tab-strip items.</summary>
+    public static readonly BindableProperty TabItemSpacingProperty = BindableProperty.Create(nameof(TabItemSpacing), typeof(double), typeof(ContainerViewBase), 4d, propertyChanged: Changed,
+        validateValue: (_, value) => double.IsFinite((double)value) && (double)value >= 0);
+    /// <summary>Gets or sets the gap between tabs and additional strip content, in device-independent units. The default is 4.</summary>
+    public double TabItemSpacing { get => (double)GetValue(TabItemSpacingProperty); set => SetValue(TabItemSpacingProperty, value); }
+    /// <summary>Identifies the tab strip's scrollbar policy.</summary>
+    public static readonly BindableProperty TabScrollBarVisibilityProperty = BindableProperty.Create(nameof(TabScrollBarVisibility), typeof(ScrollBarVisibility), typeof(ContainerViewBase), ScrollBarVisibility.Never, propertyChanged: Changed,
+        validateValue: (_, value) => Enum.IsDefined((ScrollBarVisibility)value));
+    /// <summary>Gets or sets scrollbar visibility along the strip's axis for natural-size tabs. The default is Never. Equal-size tabs do not scroll.</summary>
+    public ScrollBarVisibility TabScrollBarVisibility { get => (ScrollBarVisibility)GetValue(TabScrollBarVisibilityProperty); set => SetValue(TabScrollBarVisibilityProperty, value); }
     /// <summary>Identifies TabBarBackground.</summary>
     public static readonly BindableProperty TabBarBackgroundProperty = BindableProperty.Create(nameof(TabBarBackground), typeof(Brush), typeof(ContainerViewBase), null, propertyChanged: Changed);
     /// <summary>The background of the entire tab strip, including unused space.</summary>
@@ -85,6 +100,24 @@ public abstract class ContainerViewBase : ViewBase, IContainerView
     public static readonly BindableProperty FlyoutFooterContentProperty = BindableProperty.Create(nameof(FlyoutFooterContent), typeof(View), typeof(ContainerViewBase), null, propertyChanged: Changed);
     /// <summary>Content at the bottom of the flyout panel.</summary>
     public View? FlyoutFooterContent { get => (View?)GetValue(FlyoutFooterContentProperty); set => SetValue(FlyoutFooterContentProperty, value); }
+    /// <summary>Identifies content following destinations inside the flyout's scrollable list.</summary>
+    public static readonly BindableProperty FlyoutTrailingContentProperty = BindableProperty.Create(nameof(FlyoutTrailingContent), typeof(View), typeof(ContainerViewBase), null, propertyChanged: Changed);
+    /// <summary>Gets or sets ordinary interactive content after the visible destinations. It inherits this container's model and scrolls with the list.</summary>
+    public View? FlyoutTrailingContent { get => (View?)GetValue(FlyoutTrailingContentProperty); set => SetValue(FlyoutTrailingContentProperty, value); }
+    /// <summary>Identifies padding inside the scrollable flyout destination list.</summary>
+    public static readonly BindableProperty FlyoutListPaddingProperty = BindableProperty.Create(nameof(FlyoutListPadding), typeof(Thickness), typeof(ContainerViewBase), new Thickness(4), propertyChanged: Changed, validateValue: (_, value) => value is Thickness padding && double.IsFinite(padding.Left) && padding.Left >= 0 && double.IsFinite(padding.Top) && padding.Top >= 0 && double.IsFinite(padding.Right) && padding.Right >= 0 && double.IsFinite(padding.Bottom) && padding.Bottom >= 0);
+    /// <summary>Gets or sets destination-list padding. Header and footer padding are independent. The default is 4.</summary>
+    public Thickness FlyoutListPadding { get => (Thickness)GetValue(FlyoutListPaddingProperty); set => SetValue(FlyoutListPaddingProperty, value); }
+    /// <summary>Identifies spacing between flyout destinations.</summary>
+    public static readonly BindableProperty FlyoutItemSpacingProperty = BindableProperty.Create(nameof(FlyoutItemSpacing), typeof(double), typeof(ContainerViewBase), 4d, propertyChanged: Changed,
+        validateValue: (_, value) => double.IsFinite((double)value) && (double)value >= 0);
+    /// <summary>Gets or sets the gap between flyout destinations in device-independent units. The default is 4.</summary>
+    public double FlyoutItemSpacing { get => (double)GetValue(FlyoutItemSpacingProperty); set => SetValue(FlyoutItemSpacingProperty, value); }
+    /// <summary>Identifies the flyout list's vertical scrollbar policy.</summary>
+    public static readonly BindableProperty FlyoutScrollBarVisibilityProperty = BindableProperty.Create(nameof(FlyoutScrollBarVisibility), typeof(ScrollBarVisibility), typeof(ContainerViewBase), ScrollBarVisibility.Default, propertyChanged: Changed,
+        validateValue: (_, value) => Enum.IsDefined((ScrollBarVisibility)value));
+    /// <summary>Gets or sets the native vertical scrollbar policy. The default follows the platform.</summary>
+    public ScrollBarVisibility FlyoutScrollBarVisibility { get => (ScrollBarVisibility)GetValue(FlyoutScrollBarVisibilityProperty); set => SetValue(FlyoutScrollBarVisibilityProperty, value); }
     /// <summary>Identifies SelectedFlyoutItemTemplate.</summary>
     public static readonly BindableProperty SelectedFlyoutItemTemplateProperty = BindableProperty.Create(nameof(SelectedFlyoutItemTemplate), typeof(DataTemplate), typeof(ContainerViewBase), null, propertyChanged: Changed);
     /// <summary>The appearance of a selected flyout item.</summary>
@@ -106,6 +139,9 @@ public abstract class ContainerViewBase : ViewBase, IContainerView
         view.BodyOverlayContent = BodyOverlayContent;
         view.TabBarPosition = TabBarPosition;
         view.TabItemSizing = TabItemSizing;
+        view.TabBarPadding = TabBarPadding;
+        view.TabItemSpacing = TabItemSpacing;
+        view.TabScrollBarVisibility = TabScrollBarVisibility;
         view.TabBarBackground = TabBarBackground;
         view.TabBarCenterContent = TabBarCenterContent;
         view.TabBarTrailingContent = TabBarTrailingContent;
@@ -114,6 +150,10 @@ public abstract class ContainerViewBase : ViewBase, IContainerView
         view.FlyoutPanelBackground = FlyoutPanelBackground;
         view.FlyoutHeaderContent = FlyoutHeaderContent;
         view.FlyoutFooterContent = FlyoutFooterContent;
+        view.FlyoutTrailingContent = FlyoutTrailingContent;
+        view.FlyoutListPadding = FlyoutListPadding;
+        view.FlyoutItemSpacing = FlyoutItemSpacing;
+        view.FlyoutScrollBarVisibility = FlyoutScrollBarVisibility;
         view.SelectedFlyoutItemTemplate = SelectedFlyoutItemTemplate;
         view.UnselectedFlyoutItemTemplate = UnselectedFlyoutItemTemplate;
         view.Refresh();

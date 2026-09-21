@@ -375,13 +375,17 @@ namespace MVVMCompass
             return Task.CompletedTask;
         }
 
-        /// <inheritdoc />
+        /// <summary>Initializes a fresh registered destination after parameters, before its first presentation.</summary>
+        /// <remarks>Registered popups use this callback, not page Appearing. Register subscription release
+        /// with Ownership.RegisterCleanup so failed preparation also releases it. Return before awaiting
+        /// the completion of a deferred popup request.</remarks>
         public virtual Task BeforeFirstShown()
         {
             return Task.CompletedTask;
         }
 
-        /// <inheritdoc />
+        /// <summary>Runs terminal cleanup once, including failed registered-popup preparation.</summary>
+        /// <remarks>The default calls Deactivated. Overrides should preserve the base call when using that cleanup path.</remarks>
         public virtual Task AfterDismissed() => Deactivated();
 
         /// <summary>Releases active-view resources while retaining this instance for reuse.</summary>

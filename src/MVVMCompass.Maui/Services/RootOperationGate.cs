@@ -13,6 +13,14 @@ internal sealed class RootOperationGate : IDisposable
     private NavigationCallbackScope? callbacks;
     private RootOperationGate(SemaphoreSlim gate) => this.gate = gate;
 
+    // Deferred presentations yield to roots and popup guards; they never reserve a waiter ahead
+    // of navigation or block cancellation processing while another operation owns the window.
+    internal static RootOperationGate? TryEnter(Window window)
+    {
+        var gate = gates.GetValue(window, _ => new(1));
+        return gate.Wait(0) ? new(gate) : null;
+    }
+
     internal static RootOperationGate Enter(Window window)
     {
         var gate = gates.GetValue(window, _ => new(1));

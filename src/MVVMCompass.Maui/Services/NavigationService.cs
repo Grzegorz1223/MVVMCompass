@@ -4,7 +4,7 @@ using MVVMCompass.Interfaces;
 
 namespace MVVMCompass.Services;
 
-internal sealed partial class NavigationService(RegisteredScreenFactory registry, MauiNavigationHostFactory hosts) : INavigationService
+internal sealed partial class NavigationService(RegisteredScreenFactory registry, MauiNavigationHostFactory hosts) : INavigationService, IFlyoutNavigationService, IDeferredPopupNavigationService
 {
     private NavigationContext? context;
     private NavigationScreenEntry? screen;
@@ -15,6 +15,7 @@ internal sealed partial class NavigationService(RegisteredScreenFactory registry
     private static NavigationResult Invalid => new(NavigationStatus.InvalidOrigin);
 
     private Task<NavigationResult> OnUI(Func<Task<NavigationResult>> operation) => context == null ? Task.FromResult(Invalid) :
+        context.Host.IsContentCallback ? Task.FromResult(new NavigationResult(NavigationStatus.Reentrant)) :
         context.Window.Dispatcher.DispatchAsync(async () =>
         {
             try { return await operation(); }
@@ -52,6 +53,14 @@ internal sealed partial class NavigationService(RegisteredScreenFactory registry
 
     public Task<NavigationResult> NavigateBackToRoot(CancellationToken cancellationToken = default) => OnUI(async () => !Valid ? Invalid :
         NavigationResult.From(await DestinationContext.Deepest.PopToRootAsync(Options, cancellationToken)));
+
+    public Task<NavigationResult> CloseFlyout(CancellationToken cancellationToken = default) => OnUI(async () =>
+    {
+        if (!Valid) return Invalid;
+        for (var owner = DestinationContext; owner != null; owner = owner.ParentContext)
+            if (owner.HasFlyout) return NavigationResult.From(await owner.CloseFlyoutAsync(Options, cancellationToken));
+        return new(NavigationStatus.DestinationNotFound);
+    });
 
     public Task<NavigationResult> SetRoot<TViewModel>(Dictionary<string, object>? parameters = null, CancellationToken cancellationToken = default) where TViewModel : ViewModelBase =>
         OnUI(async () => !Valid ? Invalid : NavigationResult.From(await context!.Host.ReplaceContentRootAsync(new(registry.Definition(typeof(TViewModel), parameters))

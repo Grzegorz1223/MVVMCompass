@@ -15,6 +15,8 @@ public class MainActivity : MauiAppCompatActivity
             Intent?.GetStringExtra("mvvmcompass_smoke_id"));
         System.Environment.SetEnvironmentVariable("MVVMCOMPASS_SMOKE_SUITE",
             Intent?.GetStringExtra("mvvmcompass_smoke_suite"));
+        System.Environment.SetEnvironmentVariable("MVVMCOMPASS_STARTUP_MODE",
+            Intent?.GetStringExtra("mvvmcompass_startup_mode"));
         base.OnCreate(savedInstanceState);
         if (Intent?.GetBooleanExtra("mvvmcompass_smoke", false) == true)
             Window?.AddFlags(Android.Views.WindowManagerFlags.KeepScreenOn);

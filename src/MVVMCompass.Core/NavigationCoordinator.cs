@@ -18,6 +18,9 @@ public sealed class NavigationCoordinator
 
     internal bool IsBusy { get { lock (gate) return active != null || pending.Count != 0; } }
 
+    // Adapters may wake deferred presentation after callbacks, abandoned ownership and result publication.
+    internal event Action? Settled;
+
     /// <summary>Creates a prepared entry. The caller owns it until an operation explicitly takes ownership.</summary>
     public NavigationEntry<TViewModel> CreateEntry<TViewModel>(TViewModel viewModel, Func<Task>? cleanup = null) where TViewModel : class
     {
@@ -39,17 +42,27 @@ public sealed class NavigationCoordinator
 
     /// <summary>Runs typed work under the request's admission, cancellation and ownership contract.</summary>
     public Task<NavigationOutcome<TResult>> RunAsync<TParameter, TResult>(NavigationRequest<TParameter> request,
-        Func<NavigationOperationContext<TParameter>, Task<TResult>> callback, CancellationToken cancellationToken = default)
+        Func<NavigationOperationContext<TParameter>, Task<TResult>> callback, CancellationToken cancellationToken = default) =>
+        Admit(request, callback, cancellationToken, submitted: false);
+
+    // Application intent may be submitted inside a callback, but must never be awaited there.
+    // Admission still happens synchronously so Required work supersedes before an older commit.
+    internal Task<NavigationOutcome<TResult>> SubmitAsync<TParameter, TResult>(NavigationRequest<TParameter> request,
+        Func<NavigationOperationContext<TParameter>, Task<TResult>> callback, CancellationToken cancellationToken = default) =>
+        Admit(request, callback, cancellationToken, submitted: true);
+
+    private Task<NavigationOutcome<TResult>> Admit<TParameter, TResult>(NavigationRequest<TParameter> request,
+        Func<NavigationOperationContext<TParameter>, Task<TResult>> callback, CancellationToken cancellationToken, bool submitted)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(callback);
         if (!Enum.IsDefined(request.Priority)) throw new ArgumentOutOfRangeException(nameof(request));
         if (request.CoalescingKey != null && (string.IsNullOrWhiteSpace(request.CoalescingKey) || request.Priority != NavigationPriority.Normal))
             throw new ArgumentException("Only normal requests can have a nonempty coalescing key.", nameof(request));
-        if (NavigationCallbackScope.IsActive(this))
+        if (!submitted && NavigationCallbackScope.IsActive(this))
             return Task.FromResult(new NavigationOutcome<TResult>(NavigationStatus.Reentrant, default, false));
         for (var frame = execution.Value; frame != null; frame = frame.Parent)
-            if (ReferenceEquals(frame.Coordinator, this) && Volatile.Read(ref frame.Executing))
+            if (!submitted && ReferenceEquals(frame.Coordinator, this) && Volatile.Read(ref frame.Executing))
                 return Task.FromResult(new NavigationOutcome<TResult>(NavigationStatus.Reentrant, default, false));
         if (cancellationToken.IsCancellationRequested)
             return Task.FromResult(new NavigationOutcome<TResult>(NavigationStatus.Cancelled, default, false));
@@ -63,7 +76,7 @@ public sealed class NavigationCoordinator
                 return Task.FromResult(new NavigationOutcome<TResult>(NavigationStatus.InvalidOrigin, default, false));
             if (request.RejectIfBusy && (active != null || pending.Count != 0))
                 return Task.FromResult(new NavigationOutcome<TResult>(NavigationStatus.Busy, default, false));
-            operation = new Operation<TParameter, TResult>(this, request, callback);
+            operation = new Operation<TParameter, TResult>(this, request, callback, submitted);
             foreach (var older in pending.Concat(active == null ? [] : new[] { active }).ToArray())
             {
                 if (older.Priority != NavigationPriority.Normal) continue;
@@ -75,9 +88,25 @@ public sealed class NavigationCoordinator
             if (!draining) { draining = true; start = true; }
         }
         operation.Bind(cancellationToken, request.Origin?.Lifetime.Token ?? default);
-        foreach (var older in stopped) SignalStop(older);
-        if (start) _ = DrainAsync();
+        if (submitted && (start || stopped.Count != 0))
+        {
+            // Do not execute cancellation callbacks or inherit an active caller frame in the drain.
+            // The same coordinator and the adapter's ownership gate supply execution ordering.
+            if (ExecutionContext.IsFlowSuppressed()) _ = Task.Run(FinishAdmissionAsync);
+            else using (ExecutionContext.SuppressFlow()) _ = Task.Run(FinishAdmissionAsync);
+        }
+        else if (!submitted)
+        {
+            foreach (var older in stopped) SignalStop(older);
+            if (start) _ = DrainAsync();
+        }
         return operation.Completion.Task;
+
+        async Task FinishAdmissionAsync()
+        {
+            foreach (var older in stopped) SignalStop(older);
+            if (start) await DrainAsync();
+        }
     }
 
     private bool ValidOrigin(NavigationEntry? origin) => origin == null ||
@@ -101,6 +130,7 @@ public sealed class NavigationCoordinator
             catch (Exception error) { await operation.DispatchFailedAsync(error); }
             lock (gate) { active = null; operation.Finished = true; }
             operation.Publish();
+            Settled?.Invoke();
         }
     }
 
@@ -130,6 +160,7 @@ public sealed class NavigationCoordinator
         {
             lock (gate) operation.Finished = true;
             operation.Publish();
+            Settled?.Invoke();
         }
     }
 
@@ -205,7 +236,7 @@ public sealed class NavigationCoordinator
 
     internal abstract class Operation
     {
-        protected Operation(NavigationCoordinator coordinator, NavigationEntry? origin, NavigationPriority priority, string? coalescingKey)
+        protected Operation(NavigationCoordinator coordinator, NavigationEntry? origin, NavigationPriority priority, string? coalescingKey, bool submitted)
         {
             Coordinator = coordinator;
             Origin = origin;
@@ -213,10 +244,11 @@ public sealed class NavigationCoordinator
             Priority = priority;
             CoalescingKey = coalescingKey;
             Token = Cancellation.Token;
+            ParentFrame = submitted ? null : execution.Value;
         }
         internal NavigationCoordinator Coordinator { get; }
         // Keep logical ancestry even when a UI dispatcher does not flow ExecutionContext.
-        internal ExecutionFrame? ParentFrame { get; } = execution.Value;
+        internal ExecutionFrame? ParentFrame { get; }
         internal NavigationEntry? Origin { get; }
         internal int? OriginVersion { get; }
         internal NavigationPriority Priority { get; }
@@ -261,8 +293,8 @@ public sealed class NavigationCoordinator
     }
 
     private sealed class Operation<TParameter, TResult>(NavigationCoordinator coordinator, NavigationRequest<TParameter> request,
-        Func<NavigationOperationContext<TParameter>, Task<TResult>> callback)
-        : Operation(coordinator, request.Origin, request.Priority, request.CoalescingKey)
+        Func<NavigationOperationContext<TParameter>, Task<TResult>> callback, bool submitted)
+        : Operation(coordinator, request.Origin, request.Priority, request.CoalescingKey, submitted)
     {
         internal TaskCompletionSource<NavigationOutcome<TResult>> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private NavigationOutcome<TResult>? outcome;
