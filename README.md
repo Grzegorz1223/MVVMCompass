@@ -13,15 +13,9 @@ User presses a tab or flyout item ────────────► MVVMCo
                                           Target ViewModel + View
 ```
 
-**.NET 10 · .NET MAUI · Initial release: 1.0.0 · [MIT](https://github.com/Grzegorz1223/MVVMCompass/blob/main/LICENSE)**
+**.NET 10 · .NET MAUI · Version 1.1.0 · [MIT](https://github.com/Grzegorz1223/MVVMCompass/blob/main/LICENSE)**
 
-Download both `.nupkg` files from [GitHub Releases](https://github.com/Grzegorz1223/MVVMCompass/releases) into a local directory. NuGet.org publication is pending account setup. Add that directory as a package source before installing:
-
-```sh
-dotnet nuget add source /path/to/mvvmcompass-packages --name MVVMCompassRelease
-```
-
-Keep NuGet.org enabled for the MAUI dependencies.
+Install from [NuGet.org](https://www.nuget.org/packages/MVVMCompass.Maui). Package and symbol archives are also available from [GitHub Releases](https://github.com/Grzegorz1223/MVVMCompass/releases).
 
 | Package | Purpose |
 | --- | --- |
@@ -31,8 +25,10 @@ Keep NuGet.org enabled for the MAUI dependencies.
 Install in your .NET 10 MAUI app:
 
 ```sh
-dotnet add package MVVMCompass.Maui --version 1.0.0
+dotnet add package MVVMCompass.Maui --version 1.1.0
 ```
+
+For Core-only applications, install `MVVMCompass.Core` version `1.1.0`. Keep any direct Core and MAUI package references on the same version.
 
 [ViewModel navigation](#navigate-from-a-viewmodel) · [Tabs and flyouts](#tabs-rails-and-flyouts) · [Custom toolbar](#a-toolbar-that-stays-in-place) · [Sample app](#try-the-sample)
 
