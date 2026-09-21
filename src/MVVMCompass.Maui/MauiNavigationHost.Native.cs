@@ -88,6 +88,7 @@ internal sealed partial class MauiNavigationHost
             }
         }
         catch (Exception error) { completion.TrySetException(error); }
+        finally { NotifyDeferredPopups(); }
     }
 
     private void QueueNativeConfirmation()

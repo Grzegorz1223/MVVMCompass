@@ -57,8 +57,8 @@ internal sealed partial class NavigationContext : ObservableObject, INavigationI
     private readonly Dictionary<string, DestinationState> destinations = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> selectedChildren = new(StringComparer.Ordinal);
     private readonly List<NavigationScreenEntry> ownedScreens = [];
-    private readonly ObservableCollection<NavigationItemContext> tabs = [];
-    private readonly ObservableCollection<NavigationItemContext> menu = [];
+    private readonly NavigationItemsCollection tabs = [];
+    private readonly NavigationItemsCollection menu = [];
     private readonly Dictionary<string, NavigationItemContext> items = new(StringComparer.Ordinal);
     private DestinationState? active;
     private int pending;
@@ -336,11 +336,25 @@ internal sealed partial class NavigationContext : ObservableObject, INavigationI
     internal void SetFlyout(bool open)
     {
         if (flyout != null && !IsFlyoutPinned) flyout.IsPresented = open;
-        else if (HasFlyout) { embeddedFlyoutOpen = open; View.Refresh(); }
+        else if (HasFlyout) embeddedFlyoutOpen = open;
         FlyoutChanged();
     }
     internal void FlyoutChanged()
-    { OnPropertyChanged(nameof(IsFlyoutOpen)); OnPropertyChanged(nameof(IsFlyoutPinned)); OnPropertyChanged(nameof(LeadingAction)); }
+    {
+        RootContext.View.RefreshFlyoutOverlay();
+        OnPropertyChanged(nameof(IsFlyoutOpen)); OnPropertyChanged(nameof(IsFlyoutPinned)); OnPropertyChanged(nameof(LeadingAction));
+        if (ParentContext != null) RootContext.OnPropertyChanged(nameof(LeadingAction));
+    }
+
+    internal Task<NavigationOutcome<bool>> CloseFlyoutAsync(NavigationRequestOptions options, CancellationToken token) =>
+        RunAsync(options, operation =>
+        {
+            if (!HasFlyout) operation.Reject(NavigationStatus.DestinationNotFound);
+            if (!IsFlyoutOpen || IsFlyoutPinned) return Task.FromResult(false);
+            operation.BeginCommit();
+            SetFlyout(false);
+            return Task.FromResult(true);
+        }, token);
 
     internal bool RequestPlatformBack()
     {
@@ -396,7 +410,7 @@ internal sealed partial class NavigationContext : ObservableObject, INavigationI
                 }
             }, token);
         }
-        finally { await owner.DispatchContentAsync(() => { pending--; AvailabilityChanged(); }); }
+        finally { await owner.DispatchContentAsync(() => { pending--; AvailabilityChanged(); owner.NotifyDeferredPopups(); }); }
     }
 
     private async Task<NavigationScreenEntry> PrepareAsync(ScreenFactory factory, Dictionary<string, object>? parameters,
@@ -478,7 +492,7 @@ internal sealed partial class NavigationContext : ObservableObject, INavigationI
         var visibleTabs = top?.Children.Count > 0 ? top.Children :
             Definition.Presentation is NavigationPresentation.Tabs or NavigationPresentation.Rail ? Definition.Destinations : [];
         var next = visibleTabs.Where(destination => items.ContainsKey(destination.Id)).Select(destination => items[destination.Id]).ToArray();
-        if (!tabs.SequenceEqual(next)) { tabs.Clear(); foreach (var item in next) tabs.Add(item); }
+        tabs.ReplaceWith(next);
         OnPropertyChanged(nameof(Current)); OnPropertyChanged(nameof(SelectedDestinationId)); OnPropertyChanged(nameof(SelectedMenuId));
         OnPropertyChanged(nameof(CanGoBack)); OnPropertyChanged(nameof(LeadingAction)); OnPropertyChanged(nameof(IsActive)); OnPropertyChanged(nameof(IsClosed));
         View.Refresh();
@@ -489,7 +503,8 @@ internal sealed partial class NavigationContext : ObservableObject, INavigationI
     {
         OnPropertyChanged(nameof(IsNavigating));
         foreach (var item in items.Values) ((Command)item.SelectCommand).ChangeCanExecute();
-        ParentContext?.AvailabilityChanged();
+        if (ParentContext != null) ParentContext.AvailabilityChanged();
+        else View.RefreshBusy();
     }
     internal void RefreshState()
     {

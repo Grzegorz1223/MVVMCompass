@@ -13,7 +13,7 @@ public sealed class App : Application
     }
     protected override Window CreateWindow(IActivationState? activationState)
     {
-        var window = navigation.CreateWindow<WelcomeViewModel>();
+        var window = StartupLoadingProbe.Enabled ? StartupLoadingProbe.CreateWindow(navigation) : navigation.CreateWindow<WelcomeViewModel>();
         window.Created += Started;
         return window;
         async void Started(object? sender, EventArgs args)
@@ -21,6 +21,7 @@ public sealed class App : Application
             window.Created -= Started;
             try
             {
+                if (StartupLoadingProbe.Enabled) { await StartupLoadingProbe.CompleteAsync(); return; }
                 var result = await navigation.WaitForInitializationAsync(window);
                 if (!result.IsSuccess) throw result.Error ?? new InvalidOperationException(result.Status.ToString());
                 log.Write("READY: MAUI window is visible");

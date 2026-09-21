@@ -4,6 +4,7 @@
                     xmlns:vm="clr-namespace:MVVMCompass.Sample"
                     x:Class="MVVMCompass.Sample.TabsDemoView" x:TypeArguments="vm:TabsDemoViewModel" x:DataType="vm:TabsDemoViewModel"
                     TabBarPosition="{Binding TabPosition}" TabItemSizing="{Binding ItemSizing}" SharedContentPosition="{Binding SharedPosition}"
+                    TabBarPadding="4" TabItemSpacing="4" TabScrollBarVisibility="Default"
                     SelectedTabItemTemplate="{StaticResource SelectedDestination}" UnselectedTabItemTemplate="{StaticResource UnselectedDestination}">
     <nav:TabbedViewBase.TabBarBackground>
         <LinearGradientBrush StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#DDECF8" Offset="0" /><GradientStop Color="#EEE4F5" Offset="1" /></LinearGradientBrush>

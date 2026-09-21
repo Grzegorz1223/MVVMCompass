@@ -20,6 +20,8 @@ public sealed class NavigationOperationContext<TParameter>
     /// <summary>Gets whether the operation crossed its irreversible boundary.</summary>
     public bool HasCommitted => operation.Coordinator.IsCommitted(operation);
 
+    internal void RecordCleanupError(Exception error) => operation.Diagnostics.Add(error);
+
     /// <summary>Registers a prepared candidate for automatic abandonment unless commitment succeeds.</summary>
     public NavigationEntry<TViewModel> Own<TViewModel>(NavigationEntry<TViewModel> entry) where TViewModel : class
     {

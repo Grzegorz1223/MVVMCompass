@@ -1,9 +1,13 @@
 namespace MVVMCompass;
 
 /// <summary>Persistent custom navigation layout shared by plain, tabbed, rail, and flyout configurations.</summary>
-internal sealed class NavigationView : ContentView
+internal sealed partial class NavigationView : ContentView
 {
     private readonly Grid root = new();
+    private readonly Grid chrome = new() { RowDefinitions = [new(GridLength.Auto), new(GridLength.Auto), new(GridLength.Star), new(GridLength.Auto)] };
+    private readonly Grid flyoutOverlay = new() { IsVisible = false };
+    private NavigationView? presentedFlyout;
+    private WeakReference<VisualElement>? previousFocus;
     private readonly Grid body = new() { ColumnDefinitions = [new(GridLength.Auto), new(GridLength.Star), new(GridLength.Auto)],
         RowDefinitions = [new(GridLength.Auto), new(GridLength.Star), new(GridLength.Auto)] };
     private readonly ContentView sharedTop = new();
@@ -11,6 +15,7 @@ internal sealed class NavigationView : ContentView
     private readonly Grid drawer = new() { WidthRequest = 300, HorizontalOptions = LayoutOptions.Start,
         RowDefinitions = [new(GridLength.Auto), new(GridLength.Star), new(GridLength.Auto)] };
     private readonly Grid drawerLayer = new();
+    private readonly Button scrim = NavigationButton.Create();
     private readonly NavigationSelector menu = new() { Orientation = StackOrientation.Vertical };
     private readonly ContentView menuHeader = new();
     private readonly ContentView menuFooter = new();
@@ -18,7 +23,8 @@ internal sealed class NavigationView : ContentView
     private readonly ContentView footer = new();
     private readonly ContentView overlay = new() { InputTransparent = true };
     private readonly ContentView bodyOverlay = new() { InputTransparent = true };
-    private readonly Grid busy = new() { BackgroundColor = Color.FromArgb("#33FFFFFF"), InputTransparent = true };
+    private readonly Brush defaultLoadingBackdrop = new SolidColorBrush(Color.FromArgb("#33FFFFFF"));
+    private readonly Grid busy = new() { InputTransparent = true };
     private NavigationContext? context;
     private bool disconnected;
 
@@ -29,22 +35,18 @@ internal sealed class NavigationView : ContentView
         Presenter = new NavigationContentPresenter();
         TabSelector = new NavigationSelector();
         RailSelector = new NavigationSelector { Orientation = StackOrientation.Vertical };
-        var chrome = new Grid { RowDefinitions = [new(GridLength.Auto), new(GridLength.Auto), new(GridLength.Star), new(GridLength.Auto)] };
         chrome.Add(Toolbar, 0, 0); chrome.Add(header, 0, 1);
         var bodyLayers = new Grid(); bodyLayers.Add(Presenter); bodyLayers.Add(bodyOverlay);
         var detail = new Grid { RowDefinitions = [new(GridLength.Auto), new(GridLength.Star), new(GridLength.Auto)] };
         detail.Add(sharedTop, 0, 0); detail.Add(bodyLayers, 0, 1); detail.Add(sharedBottom, 0, 2);
         body.Add(detail, 1, 1); body.Add(TabSelector, 1, 0); body.Add(RailSelector, 0, 1);
         chrome.Add(body, 0, 2); chrome.Add(footer, 0, 3);
-        var scrim = new Button { BackgroundColor = Color.FromArgb("#77000000"), BorderWidth = 0, Command = new Command(() => context?.SetFlyout(false)) };
+        scrim.BackgroundColor = Color.FromArgb("#77000000");
+        scrim.Command = new Command(() => context?.SetFlyout(false));
         SemanticProperties.SetDescription(scrim, "Close menu");
         drawer.Add(menuHeader, 0, 0); drawer.Add(menu, 0, 1); drawer.Add(menuFooter, 0, 2);
         drawerLayer.Add(scrim); drawerLayer.Add(drawer);
-        var indicator = new ActivityIndicator { IsRunning = true, WidthRequest = 36, HeightRequest = 36,
-            HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center };
-        SemanticProperties.SetDescription(indicator, "Loading");
-        busy.Add(indicator);
-        root.Add(chrome); root.Add(drawerLayer); root.Add(overlay); root.Add(busy);
+        root.Add(chrome); root.Add(overlay); root.Add(busy); root.Add(flyoutOverlay);
         Content = root;
         ToolbarDefaults = new NavigationToolbarDefinition();
         Refresh();
@@ -105,6 +107,12 @@ internal sealed class NavigationView : ContentView
     public static readonly BindableProperty TabItemSizingProperty = BindableProperty.Create(nameof(TabItemSizing), typeof(TabItemSizing), typeof(NavigationView), TabItemSizing.Content, propertyChanged: Changed);
     /// <summary>Natural or equal sizing of visible tabs.</summary>
     public TabItemSizing TabItemSizing { get => (TabItemSizing)GetValue(TabItemSizingProperty); set => SetValue(TabItemSizingProperty, value); }
+    internal static readonly BindableProperty TabBarPaddingProperty = BindableProperty.Create(nameof(TabBarPadding), typeof(Thickness), typeof(NavigationView), new Thickness(4), propertyChanged: Changed);
+    internal Thickness TabBarPadding { get => (Thickness)GetValue(TabBarPaddingProperty); set => SetValue(TabBarPaddingProperty, value); }
+    internal static readonly BindableProperty TabItemSpacingProperty = BindableProperty.Create(nameof(TabItemSpacing), typeof(double), typeof(NavigationView), 4d, propertyChanged: Changed);
+    internal double TabItemSpacing { get => (double)GetValue(TabItemSpacingProperty); set => SetValue(TabItemSpacingProperty, value); }
+    internal static readonly BindableProperty TabScrollBarVisibilityProperty = BindableProperty.Create(nameof(TabScrollBarVisibility), typeof(ScrollBarVisibility), typeof(NavigationView), ScrollBarVisibility.Never, propertyChanged: Changed);
+    internal ScrollBarVisibility TabScrollBarVisibility { get => (ScrollBarVisibility)GetValue(TabScrollBarVisibilityProperty); set => SetValue(TabScrollBarVisibilityProperty, value); }
     /// <summary>Identifies TabBarBackground.</summary>
     public static readonly BindableProperty TabBarBackgroundProperty = BindableProperty.Create(nameof(TabBarBackground), typeof(Brush), typeof(NavigationView), null, propertyChanged: Changed);
     /// <summary>The background of the entire tab strip, including unused space.</summary>
@@ -137,6 +145,24 @@ internal sealed class NavigationView : ContentView
     public static readonly BindableProperty FlyoutFooterContentProperty = BindableProperty.Create(nameof(FlyoutFooterContent), typeof(View), typeof(NavigationView), null, propertyChanged: Changed);
     /// <summary>Content at the bottom of the flyout panel.</summary>
     public View? FlyoutFooterContent { get => (View?)GetValue(FlyoutFooterContentProperty); set => SetValue(FlyoutFooterContentProperty, value); }
+    /// <summary>Identifies content following destinations inside the flyout's scrollable list.</summary>
+    public static readonly BindableProperty FlyoutTrailingContentProperty = BindableProperty.Create(nameof(FlyoutTrailingContent), typeof(View), typeof(NavigationView), null, propertyChanged: Changed);
+    /// <summary>Gets or sets interactive content after the visible destinations, with the container's binding context.</summary>
+    public View? FlyoutTrailingContent { get => (View?)GetValue(FlyoutTrailingContentProperty); set => SetValue(FlyoutTrailingContentProperty, value); }
+    /// <summary>Identifies padding inside the scrollable flyout destination list.</summary>
+    public static readonly BindableProperty FlyoutListPaddingProperty = BindableProperty.Create(nameof(FlyoutListPadding), typeof(Thickness), typeof(NavigationView), new Thickness(4), propertyChanged: Changed, validateValue: (_, value) => value is Thickness padding && double.IsFinite(padding.Left) && padding.Left >= 0 && double.IsFinite(padding.Top) && padding.Top >= 0 && double.IsFinite(padding.Right) && padding.Right >= 0 && double.IsFinite(padding.Bottom) && padding.Bottom >= 0);
+    /// <summary>Gets or sets destination-list padding. Header and footer padding are independent. The default is 4.</summary>
+    public Thickness FlyoutListPadding { get => (Thickness)GetValue(FlyoutListPaddingProperty); set => SetValue(FlyoutListPaddingProperty, value); }
+    /// <summary>Identifies spacing between flyout destinations.</summary>
+    public static readonly BindableProperty FlyoutItemSpacingProperty = BindableProperty.Create(nameof(FlyoutItemSpacing), typeof(double), typeof(NavigationView), 4d, propertyChanged: Changed,
+        validateValue: (_, value) => double.IsFinite((double)value) && (double)value >= 0);
+    /// <summary>Gets or sets the gap between flyout destinations in device-independent units. The default is 4.</summary>
+    public double FlyoutItemSpacing { get => (double)GetValue(FlyoutItemSpacingProperty); set => SetValue(FlyoutItemSpacingProperty, value); }
+    /// <summary>Identifies the flyout list's vertical scrollbar policy.</summary>
+    public static readonly BindableProperty FlyoutScrollBarVisibilityProperty = BindableProperty.Create(nameof(FlyoutScrollBarVisibility), typeof(ScrollBarVisibility), typeof(NavigationView), ScrollBarVisibility.Default, propertyChanged: Changed,
+        validateValue: (_, value) => Enum.IsDefined((ScrollBarVisibility)value));
+    /// <summary>Gets or sets the native vertical scrollbar policy. The default follows the platform.</summary>
+    public ScrollBarVisibility FlyoutScrollBarVisibility { get => (ScrollBarVisibility)GetValue(FlyoutScrollBarVisibilityProperty); set => SetValue(FlyoutScrollBarVisibilityProperty, value); }
     /// <summary>Identifies SelectedFlyoutItemTemplate.</summary>
     public static readonly BindableProperty SelectedFlyoutItemTemplateProperty = BindableProperty.Create(nameof(SelectedFlyoutItemTemplate), typeof(DataTemplate), typeof(NavigationView), null, propertyChanged: Changed);
     /// <summary>The appearance of a selected flyout item.</summary>
@@ -166,7 +192,7 @@ internal sealed class NavigationView : ContentView
         overlay.InputTransparent = OverlayContent == null;
         bodyOverlay.Content = BodyOverlayContent; bodyOverlay.IsVisible = BodyOverlayContent != null;
         bodyOverlay.InputTransparent = BodyOverlayContent == null;
-        busy.IsVisible = IsBusy || context?.Deepest.Current?.View.IsBusy == true;
+        RefreshBusy();
         var position = context?.Definition.Presentation == NavigationPresentation.Rail ? TabBarPosition.Left : TabBarPosition;
         var rail = position is TabBarPosition.Left or TabBarPosition.Right;
         var hasTabs = context?.TabItems.Count > 0;
@@ -186,6 +212,9 @@ internal sealed class NavigationView : ContentView
         selected.ItemsSource = context?.TabItems;
         selected.IsVisible = hasTabs;
         selected.ItemSizing = TabItemSizing;
+        selected.Padding = TabBarPadding;
+        selected.ItemSpacing = TabItemSpacing;
+        selected.ScrollBarVisibility = TabScrollBarVisibility;
         selected.SelectedItemTemplate = SelectedTabItemTemplate;
         selected.UnselectedItemTemplate = UnselectedTabItemTemplate;
         selected.CenterContent = TabBarCenterContent;
@@ -196,11 +225,15 @@ internal sealed class NavigationView : ContentView
         unusedShared.Content = null; unusedShared.IsVisible = false;
         sharedHost.Content = SharedContent; sharedHost.IsVisible = SharedContent != null;
         menu.ItemsSource = context?.MenuItems;
+        menu.TrailingContent = FlyoutTrailingContent;
+        menu.Padding = FlyoutListPadding;
+        menu.ItemSpacing = FlyoutItemSpacing;
+        menu.ScrollBarVisibility = FlyoutScrollBarVisibility;
         menu.SelectedItemTemplate = SelectedFlyoutItemTemplate; menu.UnselectedItemTemplate = UnselectedFlyoutItemTemplate;
         menuHeader.Content = FlyoutHeaderContent; menuHeader.IsVisible = FlyoutHeaderContent != null;
         menuFooter.Content = FlyoutFooterContent; menuFooter.IsVisible = FlyoutFooterContent != null;
         drawer.Background = FlyoutPanelBackground ?? new SolidColorBrush(Colors.White);
-        drawerLayer.IsVisible = context?.ParentContext != null && context.IsFlyoutOpen;
+        context?.RootContext.View.RefreshFlyoutOverlay();
         var backSwipeEnabled = IsBackSwipeEnabled || context?.Current is { Children: null }
             && context.RootContext.ActiveChain().Any(owner => owner.Current?.View.IsBackSwipeEnabled == true);
         if (backSwipeEnabled && swipe == null)
@@ -213,14 +246,84 @@ internal sealed class NavigationView : ContentView
         { swipe.Swiped -= BackSwiped; Presenter.GestureRecognizers.Remove(swipe); swipe = null; }
     }
     private void BackSwiped(object? sender, SwipedEventArgs args) => context?.RequestPlatformBack();
+    internal void RefreshFlyoutOverlay()
+    {
+        if (context?.ParentContext != null || disconnected) return;
+        var next = context is { IsActive: true, IsClosed: false }
+            ? context.ActiveChain().LastOrDefault(owner => owner.ParentContext != null && !owner.IsClosed && owner.IsFlyoutOpen)?.View : null;
+        if (ReferenceEquals(next, presentedFlyout)) return;
+        var wasOpen = presentedFlyout != null;
+        if (presentedFlyout != null)
+        {
+            FindFocused(presentedFlyout.drawerLayer)?.Unfocus();
+            presentedFlyout.drawerLayer.IsVisible = false;
+        }
+        presentedFlyout = next;
+        if (next != null)
+        {
+            if (!wasOpen)
+            {
+                var focused = FindFocused(root);
+                previousFocus = focused == null ? null : new(focused);
+                focused?.Unfocus();
+            }
+            // The menu retains its declaring container's data and local resources,
+            // while its single visual parent is the window/modal root overlay.
+            next.drawerLayer.BindingContext = next.BindingContext;
+            next.drawerLayer.Resources = next.context?.ContainerScreen?.View.Resources ?? next.Resources;
+            // Retain the native parent across close/reopen. Reattaching an Android
+            // ScrollView with unchanged bounds can leave a pending native layout
+            // request that prevents its programmatic scrolling from completing.
+            if (!flyoutOverlay.Children.Contains(next.drawerLayer)) flyoutOverlay.Add(next.drawerLayer);
+            next.drawerLayer.IsVisible = true;
+        }
+        flyoutOverlay.IsVisible = next != null;
+        chrome.IsEnabled = overlay.IsEnabled = busy.IsEnabled = next == null;
+        AutomationProperties.SetExcludedWithChildren(chrome, next != null);
+        AutomationProperties.SetExcludedWithChildren(overlay, next != null);
+        AutomationProperties.SetExcludedWithChildren(busy, next != null);
+        if (next != null)
+        {
+            Dispatcher.Dispatch(() =>
+            {
+                if (ReferenceEquals(next, presentedFlyout) && context?.IsActive == true && !next.menu.FocusSelected()) next.scrim.Focus();
+            });
+        }
+        else
+        {
+            if (context?.IsActive == true && previousFocus?.TryGetTarget(out var focused) == true && focused.IsEnabled && focused.IsVisible && IsInChrome(focused)) focused.Focus();
+            previousFocus = null;
+        }
+    }
+
+    private bool IsInChrome(Element element)
+    {
+        for (Element? current = element; current != null; current = current.Parent)
+            if (ReferenceEquals(current, chrome)) return true;
+        return false;
+    }
+
+    private static VisualElement? FindFocused(IVisualTreeElement element)
+    {
+        if (element is VisualElement { IsVisible: false }) return null;
+        if (element is VisualElement { IsFocused: true } focused) return focused;
+        foreach (var child in element.GetVisualChildren())
+            if (FindFocused(child) is { } found) return found;
+        return null;
+    }
     internal void Unbind()
     {
+        context?.RootContext.View.RefreshFlyoutOverlay();
+        context?.RootContext.View.flyoutOverlay.Remove(drawerLayer);
+        flyoutOverlay.Clear(); presentedFlyout = null; previousFocus = null;
         disconnected = true;
+        ClearBusy();
         if (swipe != null) { swipe.Swiped -= BackSwiped; Presenter.GestureRecognizers.Remove(swipe); swipe = null; }
         Toolbar.Disconnect(); TabSelector.Disconnect(); RailSelector.Disconnect(); menu.Disconnect();
         sharedTop.Content = null; sharedBottom.Content = null; menuHeader.Content = null; menuFooter.Content = null;
         Presenter.Install(null); context = null;
         HeaderContent = null; FooterContent = null; OverlayContent = null; BodyOverlayContent = null;
+        FlyoutHeaderContent = null; FlyoutFooterContent = null; FlyoutTrailingContent = null;
         header.Content = null; footer.Content = null; overlay.Content = null; bodyOverlay.Content = null;
     }
 }

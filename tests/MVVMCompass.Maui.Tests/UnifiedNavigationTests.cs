@@ -21,10 +21,15 @@ public sealed partial class UnifiedNavigationTests : IAsyncDisposable
     {
         var builder = MauiApp.CreateBuilder();
         builder.Services.AddScoped<Resource>();
+        builder.Services.AddSingleton<RootActions>();
+        builder.Services.AddSingleton<PopupActions>();
+        builder.Services.AddSingleton<PopupLifecycleActions>();
         builder.UseMVVMCompass(pairs =>
         {
             pairs.Add<Tabs, TabsView>(); pairs.Add<Flyout, FlyoutView>(); pairs.Add<Leaf, LeafView>();
             pairs.Add<PopupModel, PopupView>(); pairs.Add<Detail, DetailView>(); pairs.Add<Modal, ModalView>(); pairs.Add<Failing, FailingView>();
+            pairs.Add<ApplicationRoot, ApplicationRootView>();
+            pairs.Add<LifecyclePopupModel, LifecyclePopupView>();
         });
         services = builder.Services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
         foreach (var initializer in services.GetServices<IMauiInitializeService>()) initializer.Initialize(services);
@@ -390,11 +395,20 @@ public sealed partial class UnifiedNavigationTests : IAsyncDisposable
         public override async Task BeforeFirstShown() => Success(await SetFlyoutItems([new(typeof(Tabs), "Workspace", "workspace"), Item("other")]));
         public Task<NavigationResult> Replace(IEnumerable<NavigationItem> items) => SetFlyoutItems(items, Token);
     }
-    public sealed class PopupModel(INavigationService navigation, Resource resource) : Leaf(navigation, resource);
+    public sealed class PopupModel(INavigationService navigation, Resource resource, PopupActions actions) : Leaf(navigation, resource)
+    {
+        public override Task BeforeFirstShown() => actions.Before?.Invoke(this) ?? Task.CompletedTask;
+        public override async Task AfterDismissed()
+        {
+            await base.AfterDismissed();
+            if (actions.Cleanup != null) await actions.Cleanup(this);
+        }
+    }
     public sealed class PopupView : PopupViewBase<PopupModel, string?>
     {
         internal static TaskCompletionSource<PopupView> OpenedSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public PopupView(PopupModel model) : base(model) { Opened += (_, _) => OpenedSignal.TrySetResult(this); }
+        public PopupView(PopupModel model, PopupActions actions) : base(model)
+        { Opened += (_, _) => { OpenedSignal.TrySetResult(this); actions.Opened?.Invoke(this); }; }
     }
     public sealed class Detail(INavigationService navigation, Resource resource) : Leaf(navigation, resource);
     public sealed class Modal : Leaf
@@ -417,7 +431,11 @@ public sealed partial class UnifiedNavigationTests : IAsyncDisposable
         }
     }
     public sealed class FlyoutView(Flyout model) : FlyoutViewBase<Flyout>(model);
-    public sealed class LeafView(Leaf model) : ViewBase<Leaf>(model);
+    public sealed class LeafView(Leaf model) : ViewBase<Leaf>(model)
+    {
+        internal IDisposable BeginLoading(LoadingType type) => ShowLoading(type);
+        internal void EndLoading() => HideLoading();
+    }
     public sealed class DetailView(Detail model) : ViewBase<Detail>(model);
     public sealed class ModalView(Modal model) : ViewBase<Modal>(model);
     public sealed class FailingView(Failing model) : ViewBase<Failing>(model);

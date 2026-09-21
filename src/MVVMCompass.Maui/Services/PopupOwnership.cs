@@ -39,15 +39,20 @@ internal static class PopupOwnership
     internal static bool IsTop(Window window, Popup popup) => sessions.TryGetValue(popup, out var session)
         && session.Page != null && ReferenceEquals(window.Navigation.ModalStack.LastOrDefault(), session.Page);
 
+    internal static bool HasSessions(Window window) => windows.TryGetValue(window, out var state) && state.Active.Any();
+    internal static bool IsPresented(Window window, View popup) => sessions.TryGetValue(popup, out var session)
+        && session.Page != null && window.Navigation.ModalStack.Contains(session.Page);
+
     internal static bool IsPopupPage(Page page) => page != null && page.GetType().Assembly == typeof(Popup).Assembly
         && (page.GetType().Name == "PopupPage" || page.GetType().Name.StartsWith("PopupPage`", StringComparison.Ordinal));
 
     internal static async Task<PopupNavigationResult<TResult>> ShowAsync<TResult>(Window window, View view,
-        ViewModelBase? origin = null, CancellationToken cancellationToken = default)
+        ViewModelBase? origin = null, CancellationToken cancellationToken = default, TaskCompletionSource? presented = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (origin?.IsDismissed == true) throw new InvalidOperationException("A dismissed view model cannot present a popup.");
         var session = Create(window, view, origin);
+        session.Presented = presented;
         return await session.ShowAsync<TResult>(cancellationToken);
     }
 
@@ -270,6 +275,7 @@ internal static class PopupOwnership
         internal HashSet<ViewModelBase> ReturnModels = [];
         internal List<(ViewModelBase Model, Func<Task> Callback)> Callbacks = [];
         internal bool Popping;
+        internal TaskCompletionSource? Presented;
 
         internal Session(WindowSessions state, View view, ViewModelBase? origin, ViewModelBase[] models)
         {
@@ -297,6 +303,7 @@ internal static class PopupOwnership
         }
 
         internal bool HasResult;
+        private bool IsRegistered => Models.Any(model => model.NavigationBinding != null);
         internal async Task<PopupNavigationResult<TResult>> ShowAsync<TResult>(CancellationToken cancellationToken)
         {
             showing = true;
@@ -392,9 +399,21 @@ internal static class PopupOwnership
             return signal.Task;
             async Task CloseCoreAsync()
             {
-                try { await close(); await CleanupAsync(nativeBackRequested ? DismissalReason.Back : DismissalReason.DialogClosed); signal.TrySetResult(); }
+                try
+                {
+                    if (IsRegistered && MauiNavigationHostFactory.Find(state.Window) is { } host)
+                        await host.RunPopupOperationAsync(CloseAndCompleteAsync, token, joinCurrentOperation: true);
+                    else await CloseAndCompleteAsync();
+                }
                 catch (Exception error) { signal.TrySetException(error); }
                 finally { if (cleanup?.IsCompleted == true && !showing) Finish(); }
+
+                async Task<bool> CloseAndCompleteAsync()
+                {
+                    try { await close(); await CleanupAsync(nativeBackRequested ? DismissalReason.Back : DismissalReason.DialogClosed); signal.TrySetResult(); }
+                    catch (Exception error) { signal.TrySetException(error); }
+                    return true;
+                }
             }
         }
 
@@ -463,6 +482,10 @@ internal static class PopupOwnership
             async Task CleanAsync()
             {
                 using var callback = NavigationCallbackScope.Enter(this);
+                // Lifetime cleanup can already be awaited by a presentation holding the root gate.
+                // Mark its callback origin without acquiring that gate a second time.
+                var host = MauiNavigationHostFactory.Find(state.Window);
+                using var hostCallback = host == null ? null : NavigationCallbackScope.Enter(host);
                 var previous = cleaning.Value; cleaning.Value = this;
                 try
                 {
@@ -492,7 +515,9 @@ internal static class PopupOwnership
             sessions.Remove(view);
             state.Remove(this);
             abandoned.Dispose();
+            Presented = null;
             Callbacks.Clear(); ReturnModels.Clear();
+            MauiNavigationHostFactory.Find(state.Window)?.NotifyDeferredPopups();
         }
 
         private sealed class ShowNavigation(Session session) : NavigationProxy
@@ -502,12 +527,18 @@ internal static class PopupOwnership
                 session.Attach(modal);
                 await base.OnPushModal(modal, animated);
                 session.BindNavigation();
+                session.Presented?.TrySetResult();
             }
         }
 
         private sealed class CloseNavigation(Session session) : NavigationProxy
         {
-            protected override async Task<Page> OnPopModal(bool animated)
+            protected override Task<Page> OnPopModal(bool animated) =>
+                session.IsRegistered && MauiNavigationHostFactory.Find(session.state.Window) is { } host
+                    ? host.RunPopupOperationAsync(() => PopCoreAsync(animated), session.closeToken, joinCurrentOperation: true)
+                    : PopCoreAsync(animated);
+
+            private async Task<Page> PopCoreAsync(bool animated)
             {
                 using var guardScope = NavigationCallbackScope.Enter(session);
                 foreach (var model in session.Models.Where(model => model.NavigationBinding != null && !model.IsDismissed))

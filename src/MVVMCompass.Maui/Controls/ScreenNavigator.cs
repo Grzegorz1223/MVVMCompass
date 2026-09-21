@@ -1,4 +1,5 @@
 using MVVMCompass.Core;
+using Microsoft.Maui.Dispatching;
 
 namespace MVVMCompass;
 
@@ -43,10 +44,23 @@ internal sealed class ScreenNavigator
     public Task<NavigationOutcome<NavigationScreenEntry?>> CloseModalAsync(CancellationToken cancellationToken = default) =>
         Context.CloseModalAsync(Options, cancellationToken);
     /// <summary>Shows a confirmation on this screen's owning handled page.</summary>
-    public Task<bool> DisplayAlertAsync(string title, string message, string accept, string cancel)
+    public Task<bool> DisplayAlertAsync(string title, string message, string accept, string cancel) =>
+        Context.Window.Dispatcher.DispatchAsync(() =>
+        {
+            ValidateDialogOrigin();
+            return Context.HandledPage.DisplayAlertAsync(title, message, accept, cancel);
+        });
+
+    internal Task DisplayAlertAsync(string title, string message, string cancel) =>
+        Context.Window.Dispatcher.DispatchAsync(() =>
+        {
+            ValidateDialogOrigin();
+            return Context.HandledPage.DisplayAlertAsync(title, message, cancel);
+        });
+
+    private void ValidateDialogOrigin()
     {
         if (!Context.IsActive || !Context.RootContext.ContainsActiveOrigin(Screen.Entry))
             throw new InvalidOperationException("A hidden or dismissed screen cannot present a dialog.");
-        return Context.HandledPage.DisplayAlertAsync(title, message, accept, cancel);
     }
 }

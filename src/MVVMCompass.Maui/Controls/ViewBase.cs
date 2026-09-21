@@ -31,6 +31,8 @@ public abstract partial class ViewBase : ContentView, IHasVM
     {
         base.OnBindingContextChanged();
         BindToolbar();
+        if (LoadingBackdrop != null) SetInheritedBindingContext(LoadingBackdrop, BindingContext);
+        NotifyLoadingStateChanged();
     }
 
     private void BindToolbar()

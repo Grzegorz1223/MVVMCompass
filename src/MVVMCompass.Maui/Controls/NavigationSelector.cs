@@ -8,8 +8,9 @@ public sealed class NavigationSelector : ContentView
 {
     private readonly Grid items = new() { ColumnSpacing = 4, RowSpacing = 4 };
     private readonly ScrollView scroll;
-    private readonly List<Action> cleanup = [];
+    private readonly Dictionary<NavigationItemContext, DestinationCell> cells = [];
     private INotifyCollectionChanged? collection;
+    private bool disconnected;
 
     /// <summary>Creates an empty horizontal selector.</summary>
     public NavigationSelector()
@@ -30,6 +31,12 @@ public sealed class NavigationSelector : ContentView
     public static readonly BindableProperty OrientationProperty = BindableProperty.Create(nameof(Orientation), typeof(StackOrientation), typeof(NavigationSelector), StackOrientation.Horizontal, propertyChanged: Changed);
     /// <summary>Identifies natural or equal item sizing.</summary>
     public static readonly BindableProperty ItemSizingProperty = BindableProperty.Create(nameof(ItemSizing), typeof(TabItemSizing), typeof(NavigationSelector), TabItemSizing.Content, propertyChanged: Changed);
+    /// <summary>Identifies spacing between destination items.</summary>
+    public static readonly BindableProperty ItemSpacingProperty = BindableProperty.Create(nameof(ItemSpacing), typeof(double), typeof(NavigationSelector), 4d,
+        validateValue: (_, value) => double.IsFinite((double)value) && (double)value >= 0, propertyChanged: SpacingChanged);
+    /// <summary>Identifies scrollbar visibility on the selector's scrolling axis.</summary>
+    public static readonly BindableProperty ScrollBarVisibilityProperty = BindableProperty.Create(nameof(ScrollBarVisibility), typeof(ScrollBarVisibility), typeof(NavigationSelector), ScrollBarVisibility.Never,
+        validateValue: (_, value) => Enum.IsDefined((ScrollBarVisibility)value), propertyChanged: SpacingChanged);
     /// <summary>Identifies content reserved between the two halves of the destination items.</summary>
     public static readonly BindableProperty CenterContentProperty = BindableProperty.Create(nameof(CenterContent), typeof(View), typeof(NavigationSelector), propertyChanged: Changed);
     /// <summary>Identifies content reserved after destination items.</summary>
@@ -46,77 +53,146 @@ public sealed class NavigationSelector : ContentView
     public StackOrientation Orientation { get => (StackOrientation)GetValue(OrientationProperty); set => SetValue(OrientationProperty, value); }
     /// <summary>Gets or sets equal shares or natural item sizes.</summary>
     public TabItemSizing ItemSizing { get => (TabItemSizing)GetValue(ItemSizingProperty); set => SetValue(ItemSizingProperty, value); }
+    /// <summary>Gets or sets the gap between items in device-independent units. The default is 4.</summary>
+    public double ItemSpacing { get => (double)GetValue(ItemSpacingProperty); set => SetValue(ItemSpacingProperty, value); }
+    /// <summary>Gets or sets the native scrollbar policy for natural-size items. Equal-size items do not scroll.</summary>
+    public ScrollBarVisibility ScrollBarVisibility { get => (ScrollBarVisibility)GetValue(ScrollBarVisibilityProperty); set => SetValue(ScrollBarVisibilityProperty, value); }
     /// <summary>Gets or sets shared strip content. It retains the container model as its binding context.</summary>
     public View? CenterContent { get => (View?)GetValue(CenterContentProperty); set => SetValue(CenterContentProperty, value); }
-    /// <summary>Gets or sets trailing strip content.</summary>
+    /// <summary>Gets or sets ordinary interactive content after visible items. It inherits the selector's context and scrolls with natural-size items.</summary>
     public View? TrailingContent { get => (View?)GetValue(TrailingContentProperty); set => SetValue(TrailingContentProperty, value); }
 
     private static void Changed(BindableObject bindable, object oldValue, object newValue) => ((NavigationSelector)bindable).Rebuild();
+    private static void SpacingChanged(BindableObject bindable, object oldValue, object newValue) => ((NavigationSelector)bindable).ApplyScrollSettings();
+    private void ApplyScrollSettings()
+    {
+        items.ColumnSpacing = items.RowSpacing = ItemSpacing;
+        if (scroll == null) return;
+        scroll.HorizontalScrollBarVisibility = Orientation == StackOrientation.Horizontal ? ScrollBarVisibility : ScrollBarVisibility.Never;
+        scroll.VerticalScrollBarVisibility = Orientation == StackOrientation.Vertical ? ScrollBarVisibility : ScrollBarVisibility.Never;
+    }
     private void CollectionChanged(object? sender, NotifyCollectionChangedEventArgs args) => Rebuild();
     private void Rebuild()
     {
-        if (scroll == null) return;
-        foreach (var release in cleanup) release(); cleanup.Clear(); items.Clear(); items.ColumnDefinitions.Clear(); items.RowDefinitions.Clear();
-        if (collection != null) collection.CollectionChanged -= CollectionChanged;
-        collection = ItemsSource as INotifyCollectionChanged;
-        if (collection != null) collection.CollectionChanged += CollectionChanged;
+        if (scroll == null || disconnected) return;
+        var nextCollection = ItemsSource as INotifyCollectionChanged;
+        if (!ReferenceEquals(collection, nextCollection))
+        {
+            if (collection != null) collection.CollectionChanged -= CollectionChanged;
+            collection = nextCollection;
+            if (collection != null) collection.CollectionChanged += CollectionChanged;
+        }
+        var source = (ItemsSource ?? []).ToArray();
+        var retained = source.ToHashSet();
+        foreach (var old in cells.Keys.Where(item => !retained.Contains(item)).ToArray())
+        {
+            old.PropertyChanged -= ItemChanged;
+            cells.Remove(old);
+        }
+        foreach (var item in source)
+            if (!cells.ContainsKey(item))
+            {
+                cells.Add(item, new DestinationCell(item));
+                item.PropertyChanged += ItemChanged;
+            }
         var horizontal = Orientation == StackOrientation.Horizontal;
         scroll.Orientation = horizontal ? ScrollOrientation.Horizontal : ScrollOrientation.Vertical;
-        // Detach before transferring between the finite equal grid and the natural-size scroller.
-        Content = null; scroll.Content = null;
-        if (ItemSizing == TabItemSizing.Content) { scroll.Content = items; Content = scroll; }
-        else Content = items;
-        var visible = (ItemsSource ?? []).Where(item => item.IsVisible).ToArray();
-        var index = 0;
-        void Add(View view, bool destination)
-        {
-            var length = destination && ItemSizing == TabItemSizing.Equal ? GridLength.Star : GridLength.Auto;
-            if (horizontal) { items.ColumnDefinitions.Add(new(length)); items.Add(view, index++, 0); }
-            else { items.RowDefinitions.Add(new(length)); items.Add(view, 0, index++); }
-        }
+        ApplyScrollSettings();
+        // Only transfer when the sizing mode actually changes. Reparenting an
+        // attached ScrollView resets native scrolling/focus on some platforms.
+        if (ItemSizing == TabItemSizing.Content && !ReferenceEquals(Content, scroll))
+        { Content = null; scroll.Content = items; Content = scroll; }
+        else if (ItemSizing != TabItemSizing.Content && !ReferenceEquals(Content, items))
+        { Content = null; scroll.Content = null; Content = items; }
+        var visible = source.Where(item => item.IsVisible).ToArray();
+        var ordered = new List<(View View, bool Destination)>();
         for (var i = 0; i <= visible.Length; i++)
         {
-            if (i == visible.Length / 2 && CenterContent != null) Add(CenterContent, false);
+            if (i == visible.Length / 2 && CenterContent != null) ordered.Add((CenterContent, false));
             if (i == visible.Length) break;
-            var item = visible[i];
-            var cell = new Grid { BindingContext = item };
-            var visual = new ContentView { InputTransparent = true, CascadeInputTransparent = true };
-            var input = new Button { BackgroundColor = Colors.Transparent, BorderWidth = 0, Padding = 0,
-                MinimumHeightRequest = 44, MinimumWidthRequest = 44, Command = item.SelectCommand, AutomationId = "destination-" + item.Id };
-            input.SetBinding(IsEnabledProperty, Binding.Create(static (NavigationItemContext value) => value.IsEnabled));
-            input.SetBinding(SemanticProperties.DescriptionProperty, Binding.Create(static (NavigationItemContext value) => value.Title));
-            cell.Add(visual); cell.Add(input);
-            void Update()
-            {
-                var template = (item.IsSelected ? SelectedItemTemplate : UnselectedItemTemplate) ?? ItemTemplate;
-                visual.Content = template != null ? NavigationToolbar.TemplateView(template) : new Label
-                { Text = item.Title, Padding = new Thickness(12, 8), TextColor = Color.FromArgb("#172554"),
-                    VerticalTextAlignment = TextAlignment.Center, HorizontalTextAlignment = TextAlignment.Center,
-                    BackgroundColor = item.IsSelected ? Color.FromArgb("#E2E8F0") : Colors.Transparent };
-                visual.Content.BindingContext = item;
-                visual.Content.SetBinding(IsVisibleProperty, Binding.Create(static (NavigationItemContext value) => value.IsVisible));
-                visual.Content.SetBinding(IsEnabledProperty, Binding.Create(static (NavigationItemContext value) => value.IsEnabled));
-                SemanticProperties.SetHint(input, item.IsSelected ? "Selected" : "Select destination");
-            }
-            void ItemChanged(object? sender, PropertyChangedEventArgs args)
-            {
-                if (args.PropertyName == nameof(NavigationItemContext.IsVisible)) Rebuild();
-                else if (args.PropertyName is nameof(NavigationItemContext.IsSelected) or nameof(NavigationItemContext.Title)) Update();
-            }
-            item.PropertyChanged += ItemChanged; cleanup.Add(() => item.PropertyChanged -= ItemChanged);
-            Update(); Add(cell, true);
+            var cell = cells[visible[i]];
+            cell.Update((visible[i].IsSelected ? SelectedItemTemplate : UnselectedItemTemplate) ?? ItemTemplate);
+            ordered.Add((cell, true));
         }
-        foreach (var item in (ItemsSource ?? []).Where(item => !item.IsVisible))
+        if (TrailingContent != null) ordered.Add((TrailingContent, false));
+        var wanted = ordered.Select(item => item.View).ToHashSet();
+        foreach (var old in items.Children.OfType<View>().Where(view => !wanted.Contains(view)).ToArray())
+            items.Remove(old);
+        items.ColumnDefinitions.Clear(); items.RowDefinitions.Clear();
+        for (var index = 0; index < ordered.Count; index++)
         {
-            void VisibilityChanged(object? sender, PropertyChangedEventArgs args) { if (args.PropertyName == nameof(NavigationItemContext.IsVisible)) Rebuild(); }
-            item.PropertyChanged += VisibilityChanged; cleanup.Add(() => item.PropertyChanged -= VisibilityChanged);
+            var (view, destination) = ordered[index];
+            var length = destination && ItemSizing == TabItemSizing.Equal ? GridLength.Star : GridLength.Auto;
+            if (horizontal) items.ColumnDefinitions.Add(new(length));
+            else items.RowDefinitions.Add(new(length));
+            Grid.SetColumn(view, horizontal ? index : 0);
+            Grid.SetRow(view, horizontal ? 0 : index);
+            if (items.Children.IndexOf(view) != index)
+            {
+                items.Children.Remove(view);
+                items.Children.Insert(index, view);
+            }
         }
-        if (TrailingContent != null) Add(TrailingContent, false);
+    }
+    private void ItemChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName == nameof(NavigationItemContext.IsVisible)) Rebuild();
+        else if (args.PropertyName is nameof(NavigationItemContext.IsSelected) or nameof(NavigationItemContext.Title)
+            && sender is NavigationItemContext item && cells.TryGetValue(item, out var cell))
+            cell.Update((item.IsSelected ? SelectedItemTemplate : UnselectedItemTemplate) ?? ItemTemplate);
+    }
+    internal bool FocusSelected()
+    {
+        var inputs = items.Children.OfType<DestinationCell>().Select(cell => cell.Input).Where(input => input.IsEnabled).ToArray();
+        return (inputs.FirstOrDefault(input => input.BindingContext is NavigationItemContext { IsSelected: true }) ?? inputs.FirstOrDefault())?.Focus() == true;
     }
     internal void Disconnect()
     {
+        disconnected = true;
         if (collection != null) collection.CollectionChanged -= CollectionChanged;
-        foreach (var release in cleanup) release(); cleanup.Clear(); items.Clear(); collection = null;
+        foreach (var item in cells.Keys) item.PropertyChanged -= ItemChanged;
+        cells.Clear(); items.Clear(); collection = null;
         ItemsSource = null; CenterContent = null; TrailingContent = null;
+    }
+
+    private sealed class DestinationCell : Grid
+    {
+        private readonly NavigationItemContext item;
+        private readonly ContentView visual = new() { InputTransparent = true, CascadeInputTransparent = true };
+        private DataTemplate? installedTemplate;
+        internal Button Input { get; } = NavigationButton.Create();
+
+        internal DestinationCell(NavigationItemContext item)
+        {
+            this.item = item;
+            BindingContext = item;
+            Input.Command = item.SelectCommand;
+            Input.AutomationId = "destination-" + item.Id;
+            Input.SetBinding(IsEnabledProperty, Binding.Create(static (NavigationItemContext value) => value.IsEnabled));
+            Input.SetBinding(SemanticProperties.DescriptionProperty, Binding.Create(static (NavigationItemContext value) => value.Title));
+            Add(visual); Add(Input);
+        }
+
+        internal void Update(DataTemplate? template)
+        {
+            if (visual.Content == null || installedTemplate != template)
+            {
+                installedTemplate = template;
+                visual.Content = template != null ? NavigationToolbar.TemplateView(template) : new Label
+                {
+                    Padding = new Thickness(12, 8), TextColor = Color.FromArgb("#172554"),
+                    VerticalTextAlignment = TextAlignment.Center, HorizontalTextAlignment = TextAlignment.Center
+                };
+                visual.Content.BindingContext = item;
+                visual.Content.SetBinding(IsVisibleProperty, Binding.Create(static (NavigationItemContext value) => value.IsVisible));
+                visual.Content.SetBinding(IsEnabledProperty, Binding.Create(static (NavigationItemContext value) => value.IsEnabled));
+            }
+            if (template == null && visual.Content is Label label)
+            {
+                label.Text = item.Title;
+                label.BackgroundColor = item.IsSelected ? Color.FromArgb("#E2E8F0") : Colors.Transparent;
+            }
+            SemanticProperties.SetHint(Input, item.IsSelected ? "Selected" : "Select destination");
+        }
     }
 }
