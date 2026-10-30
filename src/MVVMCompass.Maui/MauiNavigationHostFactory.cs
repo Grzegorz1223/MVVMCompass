@@ -7,31 +7,14 @@ using MVVMCompass.Services;
 namespace MVVMCompass;
 
 /// <summary>Resolves one coordinated host for each explicit window, including during CreateWindow.</summary>
-public sealed class MauiNavigationHostFactory
+public sealed partial class MauiNavigationHostFactory
 {
     /// <summary>Creates the application window factory from services configured by UseMVVMCompass.</summary>
-    public MauiNavigationHostFactory(IServiceProvider services) : this(services.GetRequiredService<IViewLocator>(),
-        services.GetRequiredService<NavigationOptions>(), services.GetRequiredService<IServiceScopeFactory>(),
-        services.GetRequiredService<NavigationRegistrationBuilder>()) { }
+    public MauiNavigationHostFactory(IServiceProvider services) => registry = services.GetRequiredService<RegisteredScreenFactory>();
 
-    private readonly RegisteredScreenFactory? registry;
+    private readonly RegisteredScreenFactory registry;
     private readonly ConditionalWeakTable<Window, WindowState> initialization = new();
-    private readonly IViewLocator viewLocator;
-    private readonly NavigationOptions options;
-    private readonly IServiceScopeFactory? scopeFactory;
     private static readonly ConditionalWeakTable<Window, MauiNavigationHost> hosts = new();
-
-    /// <summary>Creates a factory for explicit windows using the preserved locator and options configuration.</summary>
-    internal MauiNavigationHostFactory(IViewLocator viewLocator, NavigationOptions options)
-    { this.viewLocator = viewLocator; this.options = options; }
-
-    /// <summary>Enables ordinary model factories to resolve from an explicitly owned entry scope.</summary>
-    internal MauiNavigationHostFactory(IViewLocator viewLocator, NavigationOptions options, IServiceScopeFactory scopeFactory)
-        : this(viewLocator, options) => this.scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-
-    /// <summary>Creates a factory with typed, scoped destination registration.</summary>
-    internal MauiNavigationHostFactory(IViewLocator viewLocator, NavigationOptions options, IServiceScopeFactory scopeFactory,
-        NavigationRegistrationBuilder registration) : this(viewLocator, options, scopeFactory) => registry = new(registration, scopeFactory);
 
     /// <summary>Creates a window and initializes its registered root on the owning dispatcher.</summary>
     public Window CreateWindow<TViewModel>(Dictionary<string, object>? parameters = null) where TViewModel : ViewModelBase
@@ -61,7 +44,6 @@ public sealed class MauiNavigationHostFactory
 
     private Window CreateWindowCore(Func<CancellationToken, Task<InitialRoot>> resolve, WindowBootstrapOptions? bootstrapOptions, bool submitted)
     {
-        if (registry == null) throw new InvalidOperationException("Register navigation with UseMVVMCompass before creating a window.");
         var bootstrap = new ContentPage();
         Exception? loadingError = null;
         try
@@ -72,6 +54,7 @@ public sealed class MauiNavigationHostFactory
         catch (Exception error) { loadingError = error; }
         var window = new Window(bootstrap);
         var host = ForWindow(window);
+        host.RootFailureContentFactory = bootstrapOptions?.RootFailureContentFactory;
         var state = new WindowState(host) { Bootstrap = bootstrap, FailureContentFactory = bootstrapOptions?.FailureContentFactory };
         initialization.Add(window, state);
         _ = InitializeAsync();
@@ -119,7 +102,7 @@ public sealed class MauiNavigationHostFactory
             throw new ArgumentException("Only normal requests can have a nonempty coalescing key.", nameof(options));
         if (state.Host.IsClosed) return Task.FromResult(new NavigationResult(NavigationStatus.InvalidOrigin));
         if (!submitted && state.Host.IsContentCallback) return Task.FromResult(new NavigationResult(NavigationStatus.Reentrant));
-        var request = new NavigationRequest<NavigationDefinition>(registry!.Definition(typeof(TViewModel), CopyParameters(parameters)))
+        var request = new NavigationRequest<NavigationDefinition>(registry.Definition(typeof(TViewModel), CopyParameters(parameters)))
         {
             Priority = options.Mode == RootTransitionMode.Enforced ? NavigationPriority.Required : NavigationPriority.Normal,
             CoalescingKey = options.CoalescingKey
@@ -202,19 +185,10 @@ public sealed class MauiNavigationHostFactory
         internal int PendingRoots = 1;
     }
 
-    /// <summary>Gets the window's host. A window cannot be rebound to another service configuration.</summary>
-    internal MauiNavigationHost ForWindow(Window window)
-    {
-        ArgumentNullException.ThrowIfNull(window);
-        ArgumentNullException.ThrowIfNull(viewLocator);
-        ArgumentNullException.ThrowIfNull(options);
-        lock (hosts)
-        {
-            var host = hosts.GetValue(window, key => new(key, viewLocator, options, scopeFactory));
-            host.ValidateConfiguration(viewLocator, options, scopeFactory);
-            return host;
-        }
-    }
+    /// <summary>Gets the coordinator that owns this window's navigation and teardown.</summary>
+    internal MauiNavigationHost ForWindow(Window window) => GetOrCreateHost(window);
+
+    internal static MauiNavigationHost GetOrCreateHost(Window window) => hosts.GetValue(window, current => new(current));
 
     internal static ViewModelBase[] ExistingModels(Window target)
     {

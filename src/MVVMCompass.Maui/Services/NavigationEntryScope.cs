@@ -5,18 +5,29 @@ using MVVMCompass.Interfaces;
 
 namespace MVVMCompass.Services;
 
+internal sealed class NavigationEntryServices
+{
+    internal bool IsEntry;
+}
+
 /// <summary>Owns one DI scope; the destination lifetime releases it after all model cleanup.</summary>
 internal sealed class NavigationEntryScope : IAsyncDisposable
 {
     private static readonly ConditionalWeakTable<VisualElement, NavigationEntryScope> views = new();
     private static readonly ConditionalWeakTable<ViewModelBase, NavigationEntryScope> models = new();
     [ThreadStatic] private static Construction? construction;
+    internal static bool IsConstructing => construction != null;
     private readonly AsyncServiceScope scope;
     private readonly List<ViewModelBase> candidates = [];
     private Task? disposal;
     private bool bound;
 
-    internal NavigationEntryScope(IServiceScopeFactory factory) => scope = factory.CreateAsyncScope();
+    internal NavigationEntryScope(IServiceScopeFactory factory)
+    {
+        scope = factory.CreateAsyncScope();
+        // Mark before constructor injection; a navigator is bound only after its model and view exist.
+        if (scope.ServiceProvider.GetService<NavigationEntryServices>() is { } entry) entry.IsEntry = true;
+    }
     internal IServiceProvider Services => scope.ServiceProvider;
 
     internal IDisposable Construct(Type? destination = null)
@@ -68,7 +79,7 @@ internal sealed class NavigationEntryScope : IAsyncDisposable
     {
         try
         {
-            // Capture only the requested legacy destination, not singleton VM services
+            // Capture only the requested destination, not singleton VM services
             // which happen to be constructed as dependencies in the same DI call.
             await NavigationLifetimeGroup.DismissAsync(candidates.Where(model => !IsOwned(model)
                 && !MauiNavigationHost.IsClaimedModel(model)).Select(model => model.Lifetime), DismissalReason.PreparationFailed);

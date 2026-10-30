@@ -47,7 +47,7 @@ public abstract class DemoViewModel : ViewModelBase
     public IAsyncRelayCommand RootCommand { get; }
     public IAsyncRelayCommand SelectCommand { get; }
     public IAsyncRelayCommand WindowCommand { get; }
-    internal Func<Task<bool>>? Guard;
+    internal Func<Task<bool>>? Guard = null;
     public override Task<bool> CanNavigate() => Guard?.Invoke() ?? Task.FromResult(AllowNavigation);
     public override Task GetParameters(Dictionary<string, object> parameters)
     { Caption = (string)parameters.GetValueOrDefault("caption", Caption); return Task.CompletedTask; }
@@ -63,11 +63,13 @@ public sealed class WelcomeViewModel : DemoViewModel
 {
     public WelcomeViewModel(INavigationService navigation, DemoResource resource) : base(navigation, resource)
     {
-        TabsCommand = new AsyncRelayCommand(() => Apply(navigation.SetRoot<TabsDemoViewModel>()));
+        TabsCommand = new AsyncRelayCommand(() => Apply(navigation.SetRoot<SharedTabsDemoViewModel>()));
+        IndependentTabsCommand = new AsyncRelayCommand(() => Apply(navigation.SetRoot<TabsDemoViewModel>()));
         FlyoutCommand = new AsyncRelayCommand(() => Apply(navigation.SetRoot<FlyoutDemoViewModel>()));
         PlainCommand = new AsyncRelayCommand(() => Apply(navigation.NavigateTo<DocumentViewModel>()));
     }
     public IAsyncRelayCommand TabsCommand { get; }
+    public IAsyncRelayCommand IndependentTabsCommand { get; }
     public IAsyncRelayCommand FlyoutCommand { get; }
     public IAsyncRelayCommand PlainCommand { get; }
 }
@@ -80,7 +82,7 @@ public abstract class ContainerDemoViewModel : DemoViewModel
     public IReadOnlyList<SharedContentPosition> SharedPositions { get; } = Enum.GetValues<SharedContentPosition>();
 }
 
-public sealed class TabsDemoViewModel : ContainerDemoViewModel
+public class TabsDemoViewModel : ContainerDemoViewModel
 {
     public TabsDemoViewModel(INavigationService navigation, DemoResource resource) : base(navigation, resource)
     {
@@ -122,6 +124,21 @@ public sealed class TabsDemoViewModel : ContainerDemoViewModel
         new(typeof(DocumentViewModel), "Hidden", "hidden", new() { ["caption"] = "Hidden destination" }) { IsVisible = false },
         new(typeof(DocumentViewModel), "Unavailable", "disabled") { IsEnabled = false }
     ];
+}
+
+public sealed class SharedTabsDemoViewModel : TabsDemoViewModel
+{
+    public SharedTabsDemoViewModel(INavigationService navigation, DemoResource resource) : base(navigation, resource)
+    {
+        TabOptions = new()
+        {
+            Initialization = TabInitialization.Eager,
+            DetailNavigation = TabDetailNavigation.AboveTabs,
+            Lifecycle = TabLifecycle.TabSwitchCompatibility
+        };
+        Caption = "Shared tab history";
+        Status = "Open a detail to cover the tabs. Back restores the selected tab and shared controls.";
+    }
 }
 
 public sealed class FlyoutDemoViewModel : ContainerDemoViewModel

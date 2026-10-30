@@ -1,6 +1,6 @@
 namespace MVVMCompass.Interfaces
 {
-    /// <summary>Legacy initialization, visibility, navigation guard and retained or terminal cleanup callbacks.</summary>
+    /// <summary>Initialization, visibility, and retained or terminal cleanup callbacks.</summary>
     public interface IViewModelLifecycle
     {
         /// <summary>
@@ -14,7 +14,7 @@ namespace MVVMCompass.Interfaces
         Task BeforeFirstShown();
 
         /// <summary>
-        /// Performs permanent cleanup when the lifetime ends. The legacy retained profile also
+        /// Performs permanent cleanup when the lifetime ends. The TabSwitchCompatibility lifecycle also
         /// invokes this callback for temporary tab or flyout deactivation; inspect IsDismissed
         /// before releasing resources needed for reactivation.
         /// </summary>
@@ -32,10 +32,9 @@ namespace MVVMCompass.Interfaces
         Task Appearing();
 
         /// <summary>
-        /// The automatic counterpart to <see cref="Appearing"/> — called when the viewModel's page is
-        /// about to be covered, by a page pushed on top of it or by itself being popped/replaced.
-        /// Forwarded by LegacyNavigationService.AddEvents from the real MAUI Page.Disappearing event, so it
-        /// fires for every navigation away regardless of cause — no caller has to remember to signal it.
+        /// Called when the view model is covered or leaves the active branch. The default
+        /// Deactivated implementation forwards to this callback; a Deactivated override
+        /// controls whether that forwarding occurs.
         /// </summary>
         Task Disappearing();
 

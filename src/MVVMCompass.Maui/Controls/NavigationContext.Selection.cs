@@ -37,7 +37,8 @@ internal sealed partial class NavigationContext
         if (last.Candidate == null && parameters != null) await last.Target.Stack[0].ViewModel.GetParameters(parameters);
         foreach (var step in staged)
         {
-            if (step.Context.Current != null) await step.Context.DeactivateAsync(step.Context.Current);
+            if (step.Context.Current != null) await step.Context.DeactivateAsync(step.Context.Current,
+                selectionChanged: step.Target != step.Context.active);
             if (step.Candidate != null) step.Target.Stack.Add(step.Candidate);
             step.Context.active = step.Target;
             step.Context.RememberSelection();
@@ -45,7 +46,7 @@ internal sealed partial class NavigationContext
             await step.Context.View.Presenter.PresentAsync(step.Context.Current!.View, false);
         }
         foreach (var step in staged) step.Context.Publish();
-        await ActivateAsync(Current!);
+        await ActivateAsync(Current!, ViewNavigationKind.TabSelected);
         foreach (var step in staged) await step.Context.NotifySelectionAsync();
         return Deepest.Current;
     }, token);

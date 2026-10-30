@@ -101,7 +101,7 @@ public sealed partial class UnifiedNavigationTests
     [Fact]
     public async Task Window_bootstrap_reports_a_missing_registration_without_stranding_its_spinner()
     {
-        var window = factory.CreateWindow<Unregistered>(); hosts.Add(factory.ForWindow(window));
+        var window = factory.CreateWindow<Unregistered>(); hosts.Add(MauiNavigationHostFactory.GetOrCreateHost(window));
         var result = await factory.WaitForInitializationAsync(window, Token);
         Assert.Equal(NavigationStatus.Failed, result.Status);
         Assert.IsType<Label>(((ContentPage)window.Page!).Content);
@@ -138,7 +138,7 @@ public sealed partial class UnifiedNavigationTests
     }
 
     [Fact]
-    public async Task Window_destruction_releases_a_guarded_popup_and_all_retained_scopes()
+    public Task Window_destruction_releases_a_guarded_popup_and_all_retained_scopes() => OnRootUI(async () =>
     {
         var context = await Open<Tabs>(); var parent = (Tabs)context.Current!.ViewModel;
         PopupView.OpenedSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -151,7 +151,7 @@ public sealed partial class UnifiedNavigationTests
         Assert.Equal(DismissalReason.WindowClosed, result.Reason);
         Assert.True(popup.ViewModel.Resource.Disposed); Assert.True(parent.Resource.Disposed);
         Assert.Equal(1, popup.ViewModel.Dismissals);
-    }
+    });
 
     [Fact]
     public async Task Container_swipe_setting_follows_the_active_body_and_obeys_its_guard()

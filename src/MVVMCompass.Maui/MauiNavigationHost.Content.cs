@@ -6,26 +6,6 @@ namespace MVVMCompass;
 
 internal sealed partial class MauiNavigationHost
 {
-    private async Task<NavigationOutcome<MauiNavigationPage?>> RunRemovalAsync(NavigationRequest<object?> request,
-        MauiNavigationOperation operation, bool animated, CancellationToken cancellationToken)
-    {
-        if (IsContentCallback) return new(NavigationStatus.Reentrant, null, false);
-        NavigationContext? scope = null;
-        await DispatchContentAsync(() => scope = CurrentContentNavigation);
-        if (scope == null) return await RunPageRemovalAsync(request, operation, animated, cancellationToken);
-        var options = new NavigationRequestOptions { Origin = request.Origin, Priority = request.Priority,
-            CoalescingKey = request.CoalescingKey, RejectIfBusy = request.RejectIfBusy };
-        var result = await (operation switch
-        {
-            MauiNavigationOperation.Back => scope.BackAsync(options, cancellationToken),
-            MauiNavigationOperation.PopToRoot => scope.PopToRootAsync(options, cancellationToken),
-            _ => scope.CloseModalAsync(options, cancellationToken)
-        });
-        MauiNavigationPage? page = null;
-        if (result.IsSuccess) await DispatchContentAsync(() => page = CurrentPage);
-        return new(result.Status, page, result.HasCommitted, result.Error, result.CleanupErrors);
-    }
-
     /// <summary>Gets the custom content scope at the visible window or modal root.</summary>
     public NavigationContext? CurrentContentNavigation
     {
@@ -45,17 +25,17 @@ internal sealed partial class MauiNavigationHost
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.Parameter);
         var result = await RunReplacementAsync(request,
-            PlainFactory(() => new NavigationContext(this, request.Parameter, false), context =>
+            ContentRootFactory(() => new NavigationContext(this, request.Parameter, false), context =>
             {
                 var page = context.CreatePage();
                 configure?.Invoke(context.View);
                 return page;
-            }, null),
+            }),
             async (entry, definition, token) =>
             {
                 entry.ViewModel.Attach(entry);
                 await entry.InitializeAsync(definition, token);
-            }, false, cancellationToken, applicationMode, submitted);
+            }, cancellationToken, applicationMode, submitted);
         return result;
     }
 
@@ -65,12 +45,12 @@ internal sealed partial class MauiNavigationHost
         NavigationDefinition? definition = null;
         using var resolverCancellation = new CancellationTokenSource();
         return await RunReplacementAsync(new NavigationRequest<object?>(null),
-            PlainFactory(() => new NavigationContext(this, definition!, false), context => context.CreatePage(), null),
+            ContentRootFactory(() => new NavigationContext(this, definition!, false), context => context.CreatePage()),
             async (entry, _, token) =>
             {
                 entry.ViewModel.Attach(entry);
                 await entry.InitializeAsync(definition!, token);
-            }, false, resolverCancellation.Token, submitted: submitted, prepare: async token =>
+            }, resolverCancellation.Token, submitted: submitted, prepare: async token =>
             {
                 Task<InitialRoot>? resolution = null;
                 InitialRoot selected;

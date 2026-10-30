@@ -44,6 +44,7 @@ internal sealed class NavigationDefinition
     public NavigationPresentation Presentation { get; }
     /// <summary>Gets the initial destination ID, or null for the first declared destination.</summary>
     public string? InitialDestinationId { get; }
+    internal TabNavigationOptions TabOptions { get; init; } = TabNavigationOptions.Default;
 
     internal static IEnumerable<NavigationDestination> Flatten(IEnumerable<NavigationDestination> items)
     {

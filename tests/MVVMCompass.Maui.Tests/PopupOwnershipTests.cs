@@ -171,82 +171,26 @@ public sealed class PopupOwnershipTests : IAsyncDisposable
         Assert.IsType<InvalidOperationException>(error); Assert.Equal(1, model.Dismissals);
     }
 
-    [Fact]
-    public async Task Service_preparation_failure_releases_the_candidate_without_changing_origin_flags()
-    {
-        application.Add(); var caller = new Probe(); var candidate = new Probe { Before = () => throw new InvalidOperationException("preparation") };
-        var service = new LegacyNavigationService(new Locator(_ => new ProbePopup(candidate)));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.DisplayPopupWithResult<Probe, string?>(caller));
-        Assert.Equal(1, candidate.Dismissals); Assert.Equal(DismissalReason.PreparationFailed, candidate.Lifetime.Reason);
-        Assert.False(caller.IsComingFromPopup); Assert.False(caller.IsPopupOpen); Assert.False(caller.IsDismissed);
-    }
-
-    [Fact]
-    public async Task A_window_change_during_preparation_abandons_the_candidate()
-    {
-        var window = application.Add(); var replacement = new ContentPage();
-        var candidate = new Probe { Before = () => { window.Page = replacement; return Task.CompletedTask; } };
-        var service = new LegacyNavigationService(new Locator(_ => new ProbePopup(candidate)));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.DisplayPopup<Probe>(new Probe()));
-        Assert.Equal(1, candidate.Dismissals); Assert.Same(replacement, window.Page); Assert.Empty(window.Navigation.ModalStack);
-    }
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task Window_host_teardown_awaits_popups_before_the_root(bool dispose)
     {
         var window = application.Add(); var popupModel = new Probe(); var popup = new ProbePopup(popupModel);
-        await using var host = new MauiNavigationHostFactory(new Locator(_ => popup), new()).ForWindow(window);
-        var rootModel = new Plain();
-        Assert.True((await host.ReplaceRootAsync(new NavigationRequest<int>(0), () => rootModel, _ => new ContentPage(), cancellationToken: Token)).IsSuccess);
+        await using var host = MauiNavigationHostFactory.GetOrCreateHost(window);
+        var rootModel = new Probe();
+        Assert.True((await ReplaceRoot(host, rootModel)).IsSuccess);
         var opened = Signal(); popup.Opened += (_, _) => opened.TrySetResult();
-        var showing = host.DisplayPopupAsync<Probe, string?>(cancellationToken: Token); await Await(opened.Task);
+        var showing = PopupOwnership.ShowAsync<string?>(window, popup, cancellationToken: Token); await Await(opened.Task);
         var entered = Signal(); var release = Signal();
         popupModel.Cleanup = async () => { Assert.True(host.CurrentRoot!.Entry.Lifetime.IsDismissed); entered.SetResult(); await release.Task; };
         Task replacing = dispose ? host.DisposeAsync().AsTask()
-            : host.ReplaceRootAsync(new NavigationRequest<int>(0), () => new Plain(), _ => new ContentPage(), cancellationToken: Token);
+            : ReplaceRoot(host, new Probe());
         try { await Await(entered.Task); Assert.False(replacing.IsCompleted); Assert.Equal(0, rootModel.Dismissals); }
         finally { release.TrySetResult(); }
         await Await(replacing); var result = await Await(showing);
         Assert.Equal(dispose ? DismissalReason.Removed : DismissalReason.RootReplaced, result.Reason);
         Assert.Equal(1, popupModel.Dismissals); Assert.Equal(1, rootModel.Dismissals);
-    }
-
-    [Fact]
-    public async Task Explicit_window_popup_helpers_do_not_redirect_to_the_first_window()
-    {
-        var first = application.Add(); var second = application.Add(); var model = new Probe(); var popup = new ProbePopup(model);
-        await using var host = new MauiNavigationHostFactory(new Locator(_ => popup), new()).ForWindow(second);
-        var opened = Signal(); popup.Opened += (_, _) => opened.TrySetResult();
-        var showing = host.DisplayPopupAsync<Probe, string?>(cancellationToken: Token); await Await(opened.Task);
-        Assert.Empty(first.Navigation.ModalStack); Assert.Single(second.Navigation.ModalStack);
-        await host.ClosePopupAsync(Token); Assert.Null((await Await(showing)).Result);
-        Assert.Equal(1, model.Dismissals);
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Delegated_notifications_balance_failed_open_and_failed_completion(bool failOpening)
-    {
-        var host = new ModalHost { FailOpening = failOpening, FailClosing = true };
-        var invoked = false;
-        var error = await Record.ExceptionAsync(() => HandledPageDialogs.RunAsync<int>(host, () =>
-        { invoked = true; throw new InvalidOperationException("presentation"); }));
-        Assert.IsType<InvalidOperationException>(error); Assert.Equal(failOpening ? "opening" : "presentation", error.Message);
-        Assert.Equal(!failOpening, invoked); Assert.Equal(1, host.Openings); Assert.Equal(1, host.Closings); Assert.Equal(0, host.Depth);
-    }
-
-    [Fact]
-    public async Task Nested_delegated_dialogs_balance_each_independent_completion()
-    {
-        var host = new ModalHost(); var outer = new TaskCompletionSource<int>(); var inner = new TaskCompletionSource<int>();
-        var first = HandledPageDialogs.RunAsync(host, () => outer.Task);
-        var second = HandledPageDialogs.RunAsync(host, () => inner.Task);
-        Assert.Equal(2, host.Depth); inner.SetResult(2); Assert.Equal(2, await Await(second)); Assert.Equal(1, host.Depth);
-        outer.SetResult(1); Assert.Equal(1, await Await(first));
-        Assert.Equal(0, host.Depth); Assert.Equal(2, host.Openings); Assert.Equal(2, host.Closings);
     }
 
     [Theory]
@@ -296,17 +240,18 @@ public sealed class PopupOwnershipTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Legacy_root_replacement_completes_nested_popups_before_parent_cleanup()
+    public async Task Root_replacement_completes_nested_popups_before_parent_cleanup()
     {
-        var window = application.Add(); var rootModel = new Probe(); window.Page!.BindingContext = rootModel;
+        var window = application.Add(); var rootModel = new Probe();
+        await using var host = MauiNavigationHostFactory.GetOrCreateHost(window);
+        Assert.True((await ReplaceRoot(host, rootModel)).IsSuccess);
         var outer = new ProbePopup(new Probe()); var inner = new ProbePopup(new Probe());
         var first = await OpenAsync(window, outer); var second = await OpenAsync(window, inner);
         var order = new List<string>();
         inner.ViewModel.Cleanup = () => { Assert.True(rootModel.IsDismissed); Assert.True(inner.ViewModel.IsHostReplaced); order.Add("inner"); throw new InvalidOperationException("cleanup"); };
         outer.ViewModel.Cleanup = () => { order.Add("outer"); return Task.CompletedTask; };
         rootModel.Cleanup = () => { order.Add("root"); return Task.CompletedTask; };
-        var service = new LegacyNavigationService(new Locator(_ => new ProbePage(new Probe())));
-        await Await(service.PresentAsMainPage<Probe>());
+        await Await(ReplaceRoot(host, new Probe()));
         await Assert.ThrowsAsync<AggregateException>(() => Await(second));
         Assert.Equal(DismissalReason.RootReplaced, (await Await(first)).Reason);
         Assert.Equal(new[] { "inner", "outer", "root" }, order); Assert.Empty(window.Navigation.ModalStack);
@@ -316,34 +261,10 @@ public sealed class PopupOwnershipTests : IAsyncDisposable
     public async Task A_popup_cannot_borrow_a_model_owned_by_a_window_entry()
     {
         var window = application.Add(); var root = new Probe();
-        await using var host = new MauiNavigationHostFactory(new Locator(_ => new ProbePage(root)), new()).ForWindow(window);
-        Assert.True((await host.ReplaceRootAsync<Probe>(new(null), cancellationToken: Token)).IsSuccess);
+        await using var host = MauiNavigationHostFactory.GetOrCreateHost(window);
+        Assert.True((await ReplaceRoot(host, root)).IsSuccess);
         await Assert.ThrowsAsync<InvalidOperationException>(() => PopupOwnership.ShowAsync<string?>(window, new ProbePopup(root), cancellationToken: Token));
         Assert.False(root.IsDismissed); Assert.Empty(window.Navigation.ModalStack);
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Delegated_helpers_balance_only_after_popup_cleanup(bool fireAndReturn)
-    {
-        var window = application.Add(); var host = new ModalHost(); window.Page = host;
-        var origin = new Probe(); var child = new DelegatedPage(origin) { Parent = host };
-        var model = new Probe(); var popup = new Popup<int> { BindingContext = model };
-        var opened = Signal(); popup.Opened += (_, _) => opened.TrySetResult();
-        Task<IPopupResult<int>>? showing = null;
-        if (fireAndReturn) child.ShowPopup(popup); else showing = child.ShowPopupAsync(popup);
-        await Await(opened.Task); Assert.Equal(1, host.Depth); Assert.True(origin.IsPopupOpen);
-        var entered = Signal(); var release = Signal();
-        model.Cleanup = async () => { entered.SetResult(); await release.Task; };
-        var closing = popup.CloseAsync(42, Token);
-        try { await Await(entered.Task); Assert.Equal(0, host.Closings); Assert.False(showing?.IsCompleted ?? false); }
-        finally { release.TrySetResult(); }
-        await Await(closing);
-        if (showing != null) Assert.Equal(42, (await Await(showing)).Result);
-        await Await(host.Completed.Task);
-        Assert.Equal(1, host.Openings); Assert.Equal(1, host.Closings); Assert.Equal(0, host.Depth);
-        Assert.False(origin.IsDismissed); Assert.False(origin.IsPopupOpen); Assert.Equal(1, model.Dismissals);
     }
 
     [Fact]
@@ -360,63 +281,18 @@ public sealed class PopupOwnershipTests : IAsyncDisposable
     public async Task A_popup_without_a_view_model_preserves_the_root_teardown_reason()
     {
         var window = application.Add();
-        await using var host = new MauiNavigationHostFactory(new Locator(_ => new ProbePage(new Probe())), new()).ForWindow(window);
-        Assert.True((await host.ReplaceRootAsync<Probe>(new(null), cancellationToken: Token)).IsSuccess);
+        await using var host = MauiNavigationHostFactory.GetOrCreateHost(window);
+        Assert.True((await ReplaceRoot(host, new Probe())).IsSuccess);
         var popup = new Popup<int>(); var opened = Signal(); popup.Opened += (_, _) => opened.TrySetResult();
         var showing = PopupOwnership.ShowAsync<int>(window, popup, cancellationToken: Token); await Await(opened.Task);
-        var replacement = await host.ReplaceRootAsync<Probe>(new(null), cancellationToken: Token);
+        var replacement = await ReplaceRoot(host, new Probe());
         Assert.True(replacement.IsSuccess, $"{replacement.Status}: {replacement.Error}");
         Assert.Equal(DismissalReason.RootReplaced, (await Await(showing)).Reason);
     }
 
-    [Theory]
-    [InlineData((int)RetainedViewLifecycleBehavior.Deactivate)]
-    [InlineData((int)RetainedViewLifecycleBehavior.LegacyAfterDismissed)]
-    public async Task Flyout_popup_items_create_fresh_owners_when_reopened(int profileValue)
-    {
-        var profile = (RetainedViewLifecycleBehavior)profileValue;
-
-        var window = application.Add(); var rootModel = new FlyoutModelProbe(); var root = new FlyoutHost(rootModel);
-        var models = new List<Probe>();
-        var locator = new Locator(type => type == typeof(FlyoutModelProbe) ? root
-            : type == typeof(MenuModel) ? new Menu(new MenuModel()) { Title = "Menu" }
-            : type == typeof(PageModel) ? new ProbePage(new PageModel())
-            : NewPopup());
-        View NewPopup() { var model = new Probe(); models.Add(model); return new ProbePopup(model); }
-        await using var host = new MauiNavigationHostFactory(locator, new() { RetainedViewLifecycleBehavior = profile }).ForWindow(window);
-        rootModel.Before = rootModel.Compose;
-        var replaced = await host.ReplaceRootAsync<FlyoutModelProbe>(new(null), cancellationToken: Token);
-        Assert.True(replaced.IsSuccess, replaced.Error?.ToString());
-        var menu = (Menu)root.Flyout; var item = menu.MenuItems[1];
-        for (var i = 0; i < 2; i++)
-        {
-            await menu.SelectMenuItem(item, null);
-            var popup = Assert.IsType<ProbePopup>(item.Content);
-            Assert.Same(rootModel, models[i].ParentViewModel);
-            await popup.CloseAsync("menu", Token); await Await(host.ReconcileNativeAsync());
-            Assert.Equal(1, models[i].Dismissals); Assert.False(menu.ViewModel.IsDismissed);
-        }
-        Assert.Equal(2, models.Count); Assert.NotSame(models[0], models[1]);
-        Assert.Same(models[1], host.GetItems(root)[1].Entry!.ViewModel);
-    }
-
-    private sealed class DelegatedPage(Probe model) : LegacyViewBase<Probe>(model)
-    {
-        protected override Task DisplayToast(ToastEventArgs args) => Task.CompletedTask;
-        protected override Task<object?> SendCustomAction(CustomActionEventArgs args) => Task.FromResult<object?>(null);
-        protected override bool NotifyLanguageChange() => true;
-        protected override IDisposable ShowLoading(LoadingType type) => throw new NotSupportedException();
-        protected override void HideLoading() { }
-    }
-    private sealed class FlyoutModelProbe : Probe
-    {
-        internal Task Compose() => AddFlyoutViewModels(new([new(typeof(PageModel)), new(typeof(Probe))], this, typeof(MenuModel)));
-    }
-    private sealed class ProbePage(Probe model) : ContentPage, IHasVM { public ViewModelBase ViewModel { get; } = model; }
-    private sealed class PageModel : Probe;
-    private sealed class MenuModel : Probe;
-    private sealed class Menu(MenuModel model) : FlyoutViewFlyoutBase<MenuModel>(model);
-    private sealed class FlyoutHost(Probe model) : FlyoutPage, IHasVM { public ViewModelBase ViewModel { get; } = model; }
+    private static Task<NavigationOutcome<MauiNavigationRoot<NavigationContext>>> ReplaceRoot(MauiNavigationHost host, Probe model) =>
+        host.ReplaceContentRootAsync(new(new([new("root", "Root", ScreenFactory.Create(() => model, value => new ViewBase<Probe>(value)))])),
+            view => view.Presenter.AnimateNavigation = false, Token);
 
     private static async Task<Task<PopupNavigationResult<string?>>> OpenAsync(Window window, ProbePopup popup, CancellationToken? token = null)
     {
@@ -437,8 +313,7 @@ public sealed class PopupOwnershipTests : IAsyncDisposable
     private class Probe : ViewModelBase
     {
         internal int Dismissals;
-        internal Func<Task>? Cleanup, Before;
-        public override Task BeforeFirstShown() => Before?.Invoke() ?? Task.CompletedTask;
+        internal Func<Task>? Cleanup;
         public override Task AfterDismissed() { Dismissals++; return Cleanup?.Invoke() ?? Task.CompletedTask; }
     }
     private sealed class ProbePopup(Probe model) : PopupViewBase<Probe, string?>(model)
@@ -449,29 +324,5 @@ public sealed class PopupOwnershipTests : IAsyncDisposable
         protected override IDisposable ShowLoading(LoadingType type) => new Empty();
         protected override void HideLoading() { }
         private sealed class Empty : IDisposable { public void Dispose() { } }
-    }
-    private sealed class Plain : INavigationInitializable<int>, INavigationAware
-    {
-        internal int Dismissals;
-        public Task InitializeAsync(int parameter, CancellationToken token) => Task.CompletedTask;
-        public Task ActivateAsync(CancellationToken token) => Task.CompletedTask;
-        public Task DeactivateAsync() => Task.CompletedTask;
-        public Task DismissAsync(DismissalReason reason) { Dismissals++; return Task.CompletedTask; }
-    }
-    private sealed class ModalHost : ContentPage, IHandledPageModalHost
-    {
-        internal int Openings, Closings, Depth;
-        internal TaskCompletionSource Completed = Signal();
-        internal bool FailOpening, FailClosing;
-        public void OnHandledPageModalOpening() { Openings++; Depth++; if (FailOpening) throw new InvalidOperationException("opening"); }
-        public void OnHandledPageModalClosed() { Closings++; Depth--; Completed.TrySetResult(); if (FailClosing) throw new InvalidOperationException("closing"); }
-    }
-    private sealed class Locator(Func<Type, VisualElement> create) : IViewLocator
-    {
-        public void Initialize(Dictionary<Type, Type> pairs) { }
-        public VisualElement CreateAndBindVEFor<T>() where T : ViewModelBase => create(typeof(T));
-        public VisualElement CreateAndBindVEFor(Type type) => create(type);
-        public Type FindVEForViewModel(Type type) => typeof(ProbePopup);
-        public Type FindViewModelForVE(Type type) => typeof(Probe);
     }
 }

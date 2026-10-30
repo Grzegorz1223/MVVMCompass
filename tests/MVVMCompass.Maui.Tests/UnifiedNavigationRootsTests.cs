@@ -131,7 +131,7 @@ public sealed partial class UnifiedNavigationTests
         var actions = services.GetRequiredService<RootActions>();
         actions.Before = async _ => { entered.TrySetResult(); await release.Task; throw new InvalidOperationException("late initialization"); };
         var window = factory.CreateWindow<ApplicationRoot>();
-        var host = factory.ForWindow(window); hosts.Add(host);
+        var host = MauiNavigationHostFactory.GetOrCreateHost(window); hosts.Add(host);
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(10), Token);
         var request = factory.RequestRoot<Leaf>(window, new() { ["filter"] = "blocked" }, Enforced, Token);
         release.TrySetResult();
@@ -169,7 +169,7 @@ public sealed partial class UnifiedNavigationTests
     {
         var release = RootSignal();
         services.GetRequiredService<RootActions>().Before = _ => release.Task;
-        var window = factory.CreateWindow<ApplicationRoot>(); hosts.Add(factory.ForWindow(window));
+        var window = factory.CreateWindow<ApplicationRoot>(); hosts.Add(MauiNavigationHostFactory.GetOrCreateHost(window));
         using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => factory.WaitForInitializationAsync(window, cancellation.Token));
         release.TrySetResult();

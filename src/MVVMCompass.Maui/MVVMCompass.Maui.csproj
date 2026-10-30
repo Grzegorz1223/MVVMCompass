@@ -21,9 +21,9 @@
     <ProjectReference Include="../MVVMCompass.Core/MVVMCompass.Core.csproj" GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;TargetFrameworks" />
     <PackageReference Include="CommunityToolkit.Maui" Version="15.0.1" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
-    <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.101" />
+    <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.120" />
     <InternalsVisibleTo Include="MVVMCompass.Maui.Tests" />
-    <InternalsVisibleTo Include="MVVMCompass.Sample" />
+    <InternalsVisibleTo Include="MVVMCompass.Maui.SmokeTests" />
     <InternalsVisibleTo Include="MVVMCompass.Compatibility.Tests" />
     <None Include="../../README.md" Pack="true" PackagePath="/" />
   </ItemGroup>

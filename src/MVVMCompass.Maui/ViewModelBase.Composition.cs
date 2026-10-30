@@ -9,6 +9,10 @@ public abstract partial class ViewModelBase
     internal IReadOnlyList<NavigationItem> CompositionItems { get; private set; } = [];
     internal bool IsPreparingComposition { get; set; }
 
+    /// <summary>Configures this model's tab container before construction. Defaults preserve lazy, independent stacks and standard lifecycle.</summary>
+    protected TabNavigationOptions TabOptions { get; init; } = TabNavigationOptions.Default;
+    internal TabNavigationOptions CompositionOptions => TabOptions;
+
     /// <summary>Sets this model's tabs. Initialization stages membership; later calls reconcile retained destinations atomically.</summary>
     protected Task<NavigationResult> SetTabs(IEnumerable<NavigationItem> items, CancellationToken cancellationToken = default) =>
         SetDestinations(items, NavigationPresentation.Tabs, cancellationToken);
@@ -20,6 +24,8 @@ public abstract partial class ViewModelBase
     private async Task<NavigationResult> SetDestinations(IEnumerable<NavigationItem> source, NavigationPresentation kind, CancellationToken token)
     {
         ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(TabOptions);
+        TabOptions.Validate();
         var items = source.ToArray();
         if (items.Length == 0 || items.Any(item => item == null)) throw new ArgumentException("Declare at least one destination.", nameof(source));
         if (items.Select(item => item.Id).Distinct(StringComparer.Ordinal).Count() != items.Length)

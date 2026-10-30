@@ -12,6 +12,7 @@ internal sealed partial class NavigationService(RegisteredScreenFactory registry
     private bool Valid => context != null && screen != null && context.RootContext.ContainsActiveOrigin(screen.Entry);
     private NavigationRequestOptions Options => new() { Origin = screen?.Entry };
     private NavigationContext DestinationContext => screen?.Children ?? context!;
+    private NavigationContext PushContext => DestinationContext.Deepest.DetailContext();
     private static NavigationResult Invalid => new(NavigationStatus.InvalidOrigin);
 
     private Task<NavigationResult> OnUI(Func<Task<NavigationResult>> operation) => context == null ? Task.FromResult(Invalid) :
@@ -24,7 +25,7 @@ internal sealed partial class NavigationService(RegisteredScreenFactory registry
 
     public Task<NavigationResult> NavigateTo<TViewModel>(Dictionary<string, object>? parameters = null,
         CancellationToken cancellationToken = default) where TViewModel : ViewModelBase => OnUI(async () => !Valid ? Invalid :
-        NavigationResult.From(await DestinationContext.Deepest.PushAsync(registry.For(typeof(TViewModel)), parameters, Options, cancellationToken)));
+        NavigationResult.From(await PushContext.PushAsync(registry.For(typeof(TViewModel)), parameters, Options, cancellationToken)));
 
     public Task<NavigationResult> Select(string id, Dictionary<string, object>? parameters = null, CancellationToken cancellationToken = default) => OnUI(async () =>
     {
@@ -52,7 +53,7 @@ internal sealed partial class NavigationService(RegisteredScreenFactory registry
         NavigationResult.From(await context!.BackContext().BackAsync(Options, cancellationToken)));
 
     public Task<NavigationResult> NavigateBackToRoot(CancellationToken cancellationToken = default) => OnUI(async () => !Valid ? Invalid :
-        NavigationResult.From(await DestinationContext.Deepest.PopToRootAsync(Options, cancellationToken)));
+        NavigationResult.From(await PushContext.PopToRootAsync(Options, cancellationToken)));
 
     public Task<NavigationResult> CloseFlyout(CancellationToken cancellationToken = default) => OnUI(async () =>
     {
@@ -81,23 +82,21 @@ internal sealed partial class NavigationService(RegisteredScreenFactory registry
     });
 
     internal Task<NavigationResult> SetItems(IReadOnlyList<NavigationItem> items, NavigationPresentation kind, CancellationToken token) => OnUI(() =>
-        !Valid || screen?.Children == null ? Task.FromResult(Invalid) : screen.Children.ReconcileAsync(registry.Definition(items, kind), Options, token));
+        !Valid || screen?.Children == null ? Task.FromResult(Invalid) : screen.Children.ReconcileAsync(registry.Definition(items, kind, screen.ViewModel.CompositionOptions), Options, token));
 
-    public Task<NavigationResult> OpenNewWindow<TViewModel>(Dictionary<string, object>? parameters = null, CancellationToken cancellationToken = default) where TViewModel : ViewModelBase => OnUI(async () =>
+    internal Task<WindowNavigationResult> OpenWindow<TViewModel>(Action<Window> configure, Dictionary<string, object>? parameters,
+        WindowBootstrapOptions? options, CancellationToken token) where TViewModel : ViewModelBase => context == null
+        ? Task.FromResult(new WindowNavigationResult(Invalid, null, Task.CompletedTask))
+        : context.Window.Dispatcher.DispatchAsync(async () =>
+        {
+            if (!Valid) return new WindowNavigationResult(Invalid, null, Task.CompletedTask);
+            if (context.Host.IsContentCallback) return new WindowNavigationResult(new(NavigationStatus.Reentrant), null, Task.CompletedTask);
+            try { return await hosts.OpenWindow<TViewModel>(configure, parameters, options, token); }
+            catch (Exception error) { return new WindowNavigationResult(new(NavigationStatus.Failed, error: error), null, Task.CompletedTask); }
+        });
+
+    public async Task<NavigationResult> OpenNewWindow<TViewModel>(Dictionary<string, object>? parameters = null, CancellationToken cancellationToken = default) where TViewModel : ViewModelBase
     {
-        if (!Valid) return Invalid;
-        if (cancellationToken.IsCancellationRequested) return new(NavigationStatus.Cancelled);
-        var window = hosts.CreateWindow<TViewModel>(parameters);
-        try
-        {
-            Application.Current!.OpenWindow(window);
-            return await hosts.WaitForInitializationAsync(window);
-        }
-        catch (Exception error)
-        {
-            if (Application.Current?.Windows.Contains(window) == true) Application.Current.CloseWindow(window);
-            await hosts.ForWindow(window).DisposeAsync();
-            return new(NavigationStatus.Failed, error: error);
-        }
-    });
+        return (await OpenWindow<TViewModel>(_ => { }, parameters, null, cancellationToken)).Navigation;
+    }
 }

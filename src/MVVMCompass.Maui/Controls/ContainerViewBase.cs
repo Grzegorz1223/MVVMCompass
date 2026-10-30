@@ -7,7 +7,7 @@ internal interface IContainerView
 }
 
 /// <summary>Shared visual configuration for ViewModel-owned tabs and flyouts. Destinations are declared by the model.</summary>
-public abstract class ContainerViewBase : ViewBase, IContainerView
+public abstract partial class ContainerViewBase : ViewBase, IContainerView
 {
     private NavigationContext? context;
     /// <summary>Creates a container bound to its owner model.</summary>
@@ -17,6 +17,9 @@ public abstract class ContainerViewBase : ViewBase, IContainerView
     void IContainerView.Attach(NavigationContext owner)
     {
         context = owner;
+        owner.PropertyChanged += ContainerChanged;
+        owner.SelectionChanged += ContainerSelectionChanged;
+        ViewModel.RegisterSubscriptionCleanup(() => { owner.PropertyChanged -= ContainerChanged; owner.SelectionChanged -= ContainerSelectionChanged; CurrentTabChanged = null; context = null; lastSelectedTab = null; lastSelectedModel = null; });
         owner.View.BindingContext = ViewModel;
         Content = owner.View;
         ApplyVisuals();
@@ -131,6 +134,7 @@ public abstract class ContainerViewBase : ViewBase, IContainerView
     {
         if (context == null) return;
         var view = context.View;
+        ApplyLayout(view);
         view.SharedContent = SharedContent;
         view.SharedContentPosition = SharedContentPosition;
         view.HeaderContent = HeaderContent;

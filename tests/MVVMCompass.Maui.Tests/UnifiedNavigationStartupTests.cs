@@ -22,7 +22,7 @@ public sealed partial class UnifiedNavigationTests
             Assert.Equal(thread, Environment.CurrentManagedThreadId);
             calls++; entered.TrySetResult(); return resolve.Task;
         }, new() { LoadingContentFactory = () => loading });
-        var host = factory.ForWindow(window); hosts.Add(host);
+        var host = MauiNavigationHostFactory.GetOrCreateHost(window); hosts.Add(host);
         var bootstrap = Assert.IsType<ContentPage>(window.Page);
         var initialized = factory.WaitForInitializationAsync(window, Token);
         try
@@ -54,7 +54,7 @@ public sealed partial class UnifiedNavigationTests
         parameters["filter"] = "later";
         Assert.Throws<NotSupportedException>(() => ((IDictionary<string, object>)selection.Parameters!)["filter"] = "mutation");
         var window = factory.CreateWindow(_ => Task.FromResult(selection));
-        var host = factory.ForWindow(window); hosts.Add(host);
+        var host = MauiNavigationHostFactory.GetOrCreateHost(window); hosts.Add(host);
         Success(await Settle(factory.WaitForInitializationAsync(window, Token)));
         Assert.Equal("chosen", ((Leaf)host.CurrentContentNavigation!.Current!.ViewModel).Filter);
         Assert.Throws<ArgumentNullException>(() => new InitialRoot(null!));
@@ -81,7 +81,7 @@ public sealed partial class UnifiedNavigationTests
             "null-root" => Task.FromResult<InitialRoot>(null!),
             _ => Task.FromResult(InitialRoot.For<UnregisteredStartup>())
         }, new() { LoadingContentFactory = () => loading, FailureContentFactory = result => { failure = result; return content; } });
-        var host = factory.ForWindow(window); hosts.Add(host);
+        var host = MauiNavigationHostFactory.GetOrCreateHost(window); hosts.Add(host);
         var result = await Settle(factory.WaitForInitializationAsync(window, Token));
         Assert.Equal(scenario == "cancel" ? NavigationStatus.Cancelled : NavigationStatus.Failed, result.Status);
         Assert.False(result.HasCommitted); Assert.Null(host.CurrentRoot); Assert.NotNull(failure);
@@ -100,7 +100,7 @@ public sealed partial class UnifiedNavigationTests
         var entered = RootSignal(); var resolverToken = CancellationToken.None; var failures = 0;
         var window = factory.CreateWindow(token => { resolverToken = token; entered.TrySetResult(); return resolve.Task; },
             new() { FailureContentFactory = _ => { failures++; return new Label(); } });
-        var host = factory.ForWindow(window); hosts.Add(host);
+        var host = MauiNavigationHostFactory.GetOrCreateHost(window); hosts.Add(host);
         await Settle(entered.Task);
         var successor = factory.RequestRoot<Leaf>(window, new() { ["filter"] = "blocked" }, Enforced, Token);
         Assert.Equal(NavigationStatus.Superseded, (await Settle(factory.WaitForInitializationAsync(window, Token))).Status);
@@ -122,7 +122,7 @@ public sealed partial class UnifiedNavigationTests
         var resolverToken = CancellationToken.None; var failures = 0;
         var window = factory.CreateWindow(token => { resolverToken = token; entered.TrySetResult(); return resolve.Task; },
             new() { FailureContentFactory = _ => { failures++; return new Label(); } });
-        var host = factory.ForWindow(window); hosts.Add(host);
+        var host = MauiNavigationHostFactory.GetOrCreateHost(window); hosts.Add(host);
         var bootstrap = Assert.IsType<ContentPage>(window.Page);
         await Settle(entered.Task);
         await Settle(host.DisposeAsync().AsTask());
@@ -139,7 +139,7 @@ public sealed partial class UnifiedNavigationTests
         var entered = RootSignal(); var resolve = new TaskCompletionSource<InitialRoot>(TaskCreationOptions.RunContinuationsAsynchronously);
         var resolverToken = CancellationToken.None;
         var window = factory.CreateWindow(token => { resolverToken = token; entered.TrySetResult(); return resolve.Task; });
-        hosts.Add(factory.ForWindow(window)); await Settle(entered.Task);
+        hosts.Add(MauiNavigationHostFactory.GetOrCreateHost(window)); await Settle(entered.Task);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => factory.WaitForInitializationAsync(window, new CancellationToken(true)));
         Assert.False(resolverToken.IsCancellationRequested);
         resolve.SetResult(InitialRoot.For<Leaf>());
@@ -158,7 +158,7 @@ public sealed partial class UnifiedNavigationTests
             LoadingContentFactory = () => scenario switch { "throw" => throw new InvalidOperationException("loading"), "null" => null!, _ => parented },
             FailureContentFactory = _ => throw new InvalidOperationException("failure content")
         });
-        var host = factory.ForWindow(window); hosts.Add(host);
+        var host = MauiNavigationHostFactory.GetOrCreateHost(window); hosts.Add(host);
         var result = await Settle(factory.WaitForInitializationAsync(window, Token));
         Assert.Equal(NavigationStatus.Failed, result.Status); Assert.False(called);
         Assert.Single(result.CleanupErrors); AssertBootstrapFailure(window, host);
@@ -173,7 +173,7 @@ public sealed partial class UnifiedNavigationTests
         {
             FailureContentFactory = _ => { successor = factory.RequestRoot<Leaf>(window!, options: Enforced, cancellationToken: Token); return fallback; }
         });
-        var host = factory.ForWindow(window); hosts.Add(host);
+        var host = MauiNavigationHostFactory.GetOrCreateHost(window); hosts.Add(host);
         var result = await Settle(factory.WaitForInitializationAsync(window, Token));
         Assert.Equal(NavigationStatus.Failed, result.Status);
         Success(await Settle(successor!.Completion));
@@ -186,7 +186,7 @@ public sealed partial class UnifiedNavigationTests
         var entered = RootSignal(); var release = RootSignal(); var loading = new Label();
         services.GetRequiredService<RootActions>().Before = _ => { entered.TrySetResult(); return release.Task; };
         var window = factory.CreateWindow<ApplicationRoot>(new() { ["filter"] = "known" }, new() { LoadingContentFactory = () => loading });
-        var host = factory.ForWindow(window); hosts.Add(host);
+        var host = MauiNavigationHostFactory.GetOrCreateHost(window); hosts.Add(host);
         await Settle(entered.Task);
         Assert.Same(loading, Assert.IsType<ContentPage>(window.Page).Content);
         release.SetResult();

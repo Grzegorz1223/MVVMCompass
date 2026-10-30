@@ -13,6 +13,7 @@ public abstract partial class ViewBase : ContentView, IHasVM
         ViewModel = viewModel;
         BindingContext = viewModel;
         AttachModelEvents();
+        AttachNavigationEvents();
     }
 
     /// <summary>Identifies the screen's toolbar configuration.</summary>

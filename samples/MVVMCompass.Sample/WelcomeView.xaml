@@ -8,7 +8,8 @@
         <VerticalStackLayout Padding="24" Spacing="16">
             <Label Text="Navigation starts in your ViewModel." FontSize="30" FontAttributes="Bold" />
             <Label Text="Explore custom tabs, flyouts, persistent toolbars, and Toolkit popups. Every destination uses the same injected navigation service." />
-            <Button Text="Tabs • all four edges" Command="{Binding TabsCommand}" />
+            <Button Text="Tabs • details cover the tabs" Command="{Binding TabsCommand}" />
+            <Button Text="Tabs • independent histories" Command="{Binding IndependentTabsCommand}" />
             <Button Text="Flyout • nested tabs" Command="{Binding FlyoutCommand}" />
             <Button Text="Plain view • custom toolbar" Command="{Binding PlainCommand}" />
             <Button Text="Modal • independent history" Command="{Binding ModalCommand}" />

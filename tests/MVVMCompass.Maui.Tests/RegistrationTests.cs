@@ -22,12 +22,12 @@ public sealed class RegistrationTests
     }
 
     [Fact]
-    public void Typed_registration_defaults_to_separated_deactivation()
+    public void Typed_registration_provides_the_window_factory_and_registered_views()
     {
         var typed = MauiApp.CreateBuilder();
         typed.UseMVVMCompass(registrations => registrations.Add<FirstVm, FirstPage>());
         using var typedServices = typed.Services.BuildServiceProvider();
-        Assert.Equal(RetainedViewLifecycleBehavior.Deactivate, typedServices.GetRequiredService<NavigationOptions>().RetainedViewLifecycleBehavior);
+        Assert.NotNull(typedServices.GetRequiredService<MauiNavigationHostFactory>());
         Assert.IsType<FirstPage>(typedServices.GetRequiredService<FirstPage>());
     }
 
@@ -69,17 +69,15 @@ public sealed class RegistrationTests
     }
 
     [Fact]
-    public void Frozen_registration_and_locator_are_isolated_from_later_mutation()
+    public void Frozen_registration_is_isolated_from_later_mutation()
     {
         var services = new ServiceCollection();
         var registration = new NavigationRegistrationBuilder(services);
         registration.Add<FirstVm, FirstPage>();
         var snapshot = registration.Freeze();
         using var provider = services.BuildServiceProvider();
-        var locator = new ViewLocator(provider);
-        locator.Initialize(snapshot);
         snapshot.Clear();
-        Assert.Equal(typeof(FirstPage), locator.FindVEForViewModel(typeof(FirstVm)));
+        Assert.Equal(typeof(FirstPage), registration[typeof(FirstVm)]);
         Assert.Throws<InvalidOperationException>(() => registration.Add<SecondVm, SecondPage>());
     }
 
@@ -93,20 +91,6 @@ public sealed class RegistrationTests
         using var services = builder.Services.BuildServiceProvider();
         Assert.Same(expected, services.GetRequiredService<FirstVm>());
         Assert.NotSame(services.GetRequiredService<FirstPage>(), services.GetRequiredService<FirstPage>());
-    }
-
-    [Theory]
-    [InlineData((int)RetainedViewLifecycleBehavior.Deactivate)]
-    [InlineData((int)RetainedViewLifecycleBehavior.LegacyAfterDismissed)]
-    public void Typed_registration_preserves_explicit_lifecycle_profiles(int profileValue)
-    {
-        var profile = (RetainedViewLifecycleBehavior)profileValue;
-
-        var builder = MauiApp.CreateBuilder();
-        builder.UseMVVMCompass(registrations => registrations.Add<FirstVm, FirstPage>(),
-            new NavigationOptions { RetainedViewLifecycleBehavior = profile });
-        using var services = builder.Services.BuildServiceProvider();
-        Assert.Equal(profile, services.GetRequiredService<NavigationOptions>().RetainedViewLifecycleBehavior);
     }
 
     [Fact]

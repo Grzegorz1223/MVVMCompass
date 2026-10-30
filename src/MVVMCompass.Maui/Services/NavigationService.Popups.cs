@@ -8,6 +8,8 @@ internal sealed partial class NavigationService
 {
     private Popup? popup;
     private ViewModelBase? popupModel;
+    internal Popup? PopupView => popup;
+    internal NavigationContext? PopupContext => context;
     private bool closingPopup;
     internal void BindPopup(NavigationContext owner, Popup view, ViewModelBase model)
     { context = owner; popup = view; popupModel = model; }

@@ -8,66 +8,16 @@ internal sealed partial class MauiNavigationHost
     private readonly object popupPreparationGate = new();
     private readonly HashSet<Task> popupPreparations = [];
 
-    /// <summary>Presents a registered popup on this window and awaits its result and owned cleanup.</summary>
-    /// <remarks>Popup duration does not hold the operation queue. Cancellation stops the result wait; a presented popup remains owned until closed.</remarks>
-    public Task<PopupNavigationResult<TResult>> DisplayPopupAsync<TViewModel, TResult>(ViewModelBase? origin = null,
-        Dictionary<string, object>? parameters = null, CancellationToken cancellationToken = default) where TViewModel : ViewModelBase
-    {
-        if (IsClosed) return Task.FromException<PopupNavigationResult<TResult>>(new ObjectDisposedException(nameof(MauiNavigationHost)));
-        if (InHostCallback()) return Task.FromException<PopupNavigationResult<TResult>>(new InvalidOperationException("Present a popup outside this host's lifecycle callbacks."));
-        var preparation = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        lock (popupPreparationGate)
-        {
-            if (IsClosed) return Task.FromException<PopupNavigationResult<TResult>>(new ObjectDisposedException(nameof(MauiNavigationHost)));
-            popupPreparations.Add(preparation.Task);
-        }
-        return PresentAsync();
-
-        async Task<PopupNavigationResult<TResult>> PresentAsync()
-        {
-            try
-            {
-                return await Window.Dispatcher.DispatchAsync(async () =>
-                {
-                    var parent = execution.Value;
-                    var frame = new Execution(this, parent);
-                    execution.Value = frame;
-                    try
-                    {
-                        closingToken.ThrowIfCancellationRequested();
-                        if (origin != null && !ViewModelTree.Collect(Window.Page, true).Contains(origin))
-                            throw new InvalidOperationException("The popup origin belongs to another presentation.");
-                        return await composition.DisplayPopupResultAsync<TViewModel, TResult>(origin, parameters,
-                            cancellationToken, closingToken, () =>
-                            {
-                                frame.Executing = false;
-                                Prepared();
-                            });
-                    }
-                    finally { frame.Executing = false; execution.Value = parent; }
-                });
-            }
-            finally { Prepared(); }
-        }
-
-        void Prepared()
-        {
-            lock (popupPreparationGate)
-            {
-                popupPreparations.Remove(preparation.Task);
-                preparation.TrySetResult();
-            }
-        }
-    }
-
     internal Task<PopupNavigationResult<TResult>> PresentRegisteredPopupAsync<TResult>(ViewModelBase origin,
-        Func<CancellationToken, Task<View>> prepare, Func<bool> validOrigin, CancellationToken token) =>
-        Window.Dispatcher.DispatchAsync(async () => await await StartRegisteredPopupAsync<TResult>(origin, prepare, validOrigin, token));
+        Func<CancellationToken, Task<View>> prepare, Func<bool> validOrigin, CancellationToken token,
+        CommunityToolkit.Maui.IPopupOptions? options = null) =>
+        Window.Dispatcher.DispatchAsync(async () => await await StartRegisteredPopupAsync<TResult>(origin, prepare, validOrigin, token, options: options));
 
     // Returns after native installation; its inner task represents interaction and terminal cleanup.
     private async Task<Task<PopupNavigationResult<TResult>>> StartRegisteredPopupAsync<TResult>(ViewModelBase origin,
         Func<CancellationToken, Task<View>> prepare, Func<bool> validOrigin, CancellationToken token,
-        bool joinCurrentOperation = false, Action? onPresented = null)
+        bool joinCurrentOperation = false, Action? onPresented = null, CommunityToolkit.Maui.IPopupOptions? options = null,
+        Func<ModalPresentationScope>? observe = null)
     {
         var prepared = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         lock (popupPreparationGate)
@@ -89,7 +39,7 @@ internal sealed partial class MauiNavigationHost
                     linked.Token.ThrowIfCancellationRequested();
                     if (!validOrigin()) throw new InvalidOperationException("The popup origin changed during preparation.");
                     var presented = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                    var result = PopupOwnership.ShowAsync<TResult>(Window, popup, origin, token, presented);
+                    var result = PopupOwnership.ShowAsync<TResult>(Window, popup, origin, token, presented, options, observe);
                     try
                     {
                         await Task.WhenAny(presented.Task, result);

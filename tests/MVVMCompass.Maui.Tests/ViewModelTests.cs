@@ -24,26 +24,6 @@ public sealed class ViewModelTests
         Assert.Equal(1, vm.Dismissals);
     }
 
-    [Theory]
-    [InlineData((int)RetainedViewLifecycleBehavior.Deactivate, 1, 0)]
-    [InlineData((int)RetainedViewLifecycleBehavior.LegacyAfterDismissed, 0, 1)]
-    public async Task Both_retained_lifecycle_profiles_keep_the_instance_usable(
-        int behaviorValue, int deactivations, int dismissals)
-    {
-        var behavior = (RetainedViewLifecycleBehavior)behaviorValue;
-
-        var vm = new Probe { RetainedViewLifecycleBehavior = behavior };
-        var toastCalls = 0;
-        vm.DisplayToastEvent += _ => { toastCalls++; return Task.CompletedTask; };
-        await vm.DeactivateRetainedAsync();
-        Assert.Equal(deactivations, vm.Deactivations);
-        Assert.Equal(dismissals, vm.Dismissals);
-        Assert.False(vm.IsDismissed);
-        Assert.False(vm.Token.IsCancellationRequested);
-        await vm.Toast();
-        Assert.Equal(1, toastCalls);
-    }
-
     [Fact]
     public async Task Failed_cleanup_still_disconnects_view_callbacks()
     {
@@ -131,21 +111,6 @@ public sealed class ViewModelTests
             Assert.Same(outer, new Probe().ParentViewModel);
         }
         Assert.Null(new Probe().ParentViewModel);
-    }
-
-    [Fact]
-    public void Type_only_and_metadata_tab_declarations_are_both_supported()
-    {
-        var vm = new Probe();
-        var simple = new TabbedViewModelsEventArgs(new[] { typeof(Probe) }, vm);
-        Assert.Equal([typeof(Probe)], simple.TabbedViewModelTypes);
-        var parameters = new Dictionary<string, object> { ["record"] = 7 };
-        var metadata = new TabModel(typeof(Probe), true, parameters, true);
-        var rich = new TabbedViewModelsEventArgs(new[] { metadata }, vm);
-        var tab = Assert.Single(rich.TabbedViewModels);
-        Assert.True(tab.HideInTabBar);
-        Assert.True(tab.ShouldBeSelectedByDefault);
-        Assert.Same(parameters, tab.Parameters);
     }
 
     internal sealed class Probe : ViewModelBase

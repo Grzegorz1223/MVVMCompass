@@ -6,10 +6,13 @@
     <TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('windows'))">$(TargetFrameworks);net10.0-windows10.0.19041.0</TargetFrameworks>
     <OutputType>Exe</OutputType>
     <AssemblyName>MVVMCompass.Sample</AssemblyName>
+    <AssemblyName Condition="'$(NavigationSmokeBuild)' == 'true'">MVVMCompass.Maui.SmokeTests</AssemblyName>
+    <DefineConstants Condition="'$(NavigationSmokeBuild)' == 'true'">$(DefineConstants);NAVIGATION_SMOKE</DefineConstants>
     <RootNamespace>MVVMCompass.Sample</RootNamespace>
     <UseMaui>true</UseMaui>
     <SingleProject>true</SingleProject>
-    <MauiVersion>10.0.101</MauiVersion>
+    <MauiVersion>10.0.120</MauiVersion>
+    <ToolkitVersion Condition="'$(ToolkitVersion)' == ''">15.0.1</ToolkitVersion>
     <MauiXamlInflator>SourceGen</MauiXamlInflator>
     <ApplicationTitle>MVVMCompass Sample</ApplicationTitle>
     <ApplicationId>dev.mvvmcompass.sample</ApplicationId>
@@ -30,12 +33,13 @@
     <RuntimeIdentifier>$(RuntimeIdentifierOverride)</RuntimeIdentifier>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="../../tests/MVVMCompass.Maui.SmokeTests/**/*.cs" />
-    <MauiXaml Include="../../tests/MVVMCompass.Maui.SmokeTests/**/*.xaml" />
-    <MauiImage Include="../../tests/MVVMCompass.Maui.SmokeTests/Assets/*.svg" />
+    <Compile Include="../../tests/MVVMCompass.Maui.SmokeTests/**/*.cs" Condition="'$(NavigationSmokeBuild)' == 'true'" />
+    <MauiXaml Include="../../tests/MVVMCompass.Maui.SmokeTests/**/*.xaml" Condition="'$(NavigationSmokeBuild)' == 'true'" />
+    <MauiImage Include="../../tests/MVVMCompass.Maui.SmokeTests/Assets/*.svg" Condition="'$(NavigationSmokeBuild)' == 'true'" />
     <ProjectReference Include="../../src/MVVMCompass.Maui/MVVMCompass.Maui.csproj" Condition="'$(NavigationUsePackages)' != 'true'" GlobalPropertiesToRemove="RuntimeIdentifier;RuntimeIdentifiers;TargetFrameworks" />
     <PackageReference Include="$(NavigationMauiPackageId)" Version="$(NavigationPackageVersion)" Condition="'$(NavigationUsePackages)' == 'true'" />
     <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
+    <PackageReference Include="CommunityToolkit.Maui" Version="$(ToolkitVersion)" />
     <MauiIcon Include="Resources/AppIcon/appicon.svg" ForegroundFile="Resources/AppIcon/appiconfg.svg" Color="#512BD4" />
     <MauiSplashScreen Include="Resources/Splash/splash.svg" Color="#512BD4" BaseSize="128,128" />
   </ItemGroup>

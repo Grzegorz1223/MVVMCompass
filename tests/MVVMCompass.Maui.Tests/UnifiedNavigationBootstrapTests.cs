@@ -19,7 +19,7 @@ public sealed partial class UnifiedNavigationTests
         var actions = services.GetRequiredService<RootActions>();
         actions.Before = async _ => { entered.TrySetResult(); await release.Task; throw new InvalidOperationException("initial preparation"); };
         var window = factory.CreateWindow<ApplicationRoot>();
-        var host = factory.ForWindow(window); hosts.Add(host);
+        var host = MauiNavigationHostFactory.GetOrCreateHost(window); hosts.Add(host);
         var bootstrap = window.Page;
         RootTransitionHandle? successor = null;
         using var cancel = new CancellationTokenSource();
@@ -78,7 +78,7 @@ public sealed partial class UnifiedNavigationTests
             throw new InvalidOperationException(initial ? "initial" : "successor");
         };
         var window = factory.CreateWindow<ApplicationRoot>();
-        var host = factory.ForWindow(window); hosts.Add(host);
+        var host = MauiNavigationHostFactory.GetOrCreateHost(window); hosts.Add(host);
         var bootstrap = window.Page;
         RootTransitionHandle? failing = null, last = null;
         using var cancel = new CancellationTokenSource();
@@ -122,7 +122,7 @@ public sealed partial class UnifiedNavigationTests
             var actions = services.GetRequiredService<RootActions>();
             actions.Before = _ => { Interlocked.Exchange(ref dispatcher.HoldNext, 1); throw new InvalidOperationException("initial"); };
             var window = factory.CreateWindow<ApplicationRoot>();
-            var host = factory.ForWindow(window); hosts.Add(host);
+            var host = MauiNavigationHostFactory.GetOrCreateHost(window); hosts.Add(host);
             resume = await Settle(dispatcher.Held.Task);
             var errorPages = 0;
             window.PropertyChanged += (_, args) =>
@@ -156,7 +156,7 @@ public sealed partial class UnifiedNavigationTests
             var actions = services.GetRequiredService<RootActions>();
             actions.Before = _ => { Interlocked.Exchange(ref dispatcher.HoldNext, 1); throw new InvalidOperationException("initial"); };
             var window = factory.CreateWindow<ApplicationRoot>();
-            var host = factory.ForWindow(window); hosts.Add(host);
+            var host = MauiNavigationHostFactory.GetOrCreateHost(window); hosts.Add(host);
             resume = await Settle(dispatcher.Held.Task);
             using var cancel = new CancellationTokenSource();
             var successor = factory.SetRoot<Leaf>(window, options: new() { Mode = mode }, cancellationToken: cancel.Token);
@@ -181,7 +181,7 @@ public sealed partial class UnifiedNavigationTests
         var actions = services.GetRequiredService<RootActions>();
         actions.Before = async _ => { entered.TrySetResult(); await release.Task; throw new InvalidOperationException("initial"); };
         var window = factory.CreateWindow<ApplicationRoot>();
-        var host = factory.ForWindow(window); hosts.Add(host);
+        var host = MauiNavigationHostFactory.GetOrCreateHost(window); hosts.Add(host);
         var bootstrap = window.Page;
         await Settle(entered.Task);
         var successor = factory.RequestRoot<Leaf>(window, options: Enforced, cancellationToken: Token);
@@ -202,7 +202,7 @@ public sealed partial class UnifiedNavigationTests
         actions.Before = _ => throw new InvalidOperationException("initial");
         actions.Cleanup = _ => throw new InvalidOperationException("cleanup");
         var window = factory.CreateWindow<ApplicationRoot>();
-        var host = factory.ForWindow(window); hosts.Add(host);
+        var host = MauiNavigationHostFactory.GetOrCreateHost(window); hosts.Add(host);
         var result = await Settle(factory.WaitForInitializationAsync(window, Token));
         Assert.Equal(NavigationStatus.Failed, result.Status);
         Assert.False(result.HasCommitted);
@@ -219,7 +219,7 @@ public sealed partial class UnifiedNavigationTests
         var actions = services.GetRequiredService<RootActions>();
         actions.Appear = _ => throw new InvalidOperationException("activation");
         var window = factory.CreateWindow<ApplicationRoot>();
-        var host = factory.ForWindow(window); hosts.Add(host);
+        var host = MauiNavigationHostFactory.GetOrCreateHost(window); hosts.Add(host);
         var result = await Settle(factory.WaitForInitializationAsync(window, Token));
         Assert.Equal(NavigationStatus.Failed, result.Status); Assert.True(result.HasCommitted);
         Assert.Same(host.CurrentRoot!.Page, window.Page);
@@ -235,7 +235,7 @@ public sealed partial class UnifiedNavigationTests
         try
         {
             var window = factory.CreateWindow<Leaf>();
-            hosts.Add(factory.ForWindow(window));
+            hosts.Add(MauiNavigationHostFactory.GetOrCreateHost(window));
             var result = await Settle(factory.WaitForInitializationAsync(window, Token));
             Assert.Equal(NavigationStatus.Failed, result.Status); Assert.False(result.HasCommitted);
             Assert.NotNull(result.Error); Assert.Single(result.CleanupErrors);

@@ -114,6 +114,47 @@ public override Task GetParameters(Dictionary<string, object> parameters)
 
 The injected service belongs to the originating screen/container and window. Toolkit popup visuals use `PopupViewBase<TViewModel, TResult>`; the popup ViewModel calls `navigation.ClosePopup(result)` or `navigation.ClosePopup()`. Check `answer.HasResult` to distinguish an explicit result—including `null`—from dismissal. An active top popup can use its own injected service to present a child popup. A covered parent cannot close or present over its child. Canceling the result wait leaves an already displayed popup owned until it closes.
 
+### Library structure
+
+The library has one content-navigation engine. `Controls/*.Layout.cs` builds shared layout for all supported platforms; desktop-oriented slots are optional controls, not a second desktop implementation. Platform-specific files such as `NavigationContext.Android.cs` remain where native integration differs.
+
+The window host coordinates navigation, ownership, cancellation, popups and terminal cleanup. Application session policy, recording, PMS integrations, refresh rules and window styling belong in the application. `TabLifecycle.TabSwitchCompatibility` remains an explicit option on the current engine. The previously published `MauiNavigationOperation` and `MauiNavigationException` types remain for API compatibility; they do not retain the old engine.
+
+### Desktop integration (1.1.1-dev.7 preview)
+
+`NavigationRegistrationBuilder.Add(Type viewModel, Type view)` and `builder.AddViewModelViewPair(Type, Type)` support module-supplied registrations with the same validation, lifetimes and registry freezing as generic registration. When trimming, preserve public constructors through the application’s own runtime type pipeline. Resolving `INavigationService` outside an owned entry now throws immediately. Pass an entry’s injected service/commands to helpers; use `MauiNavigationHostFactory` and an explicit Window for application navigation.
+
+`NavigationItemContext.View` is the retained destination root, or null before lazy preparation and after release. Reset/replacement raises a property notification; it is populated by `CurrentTabChanged`. Read separate panel properties or metadata from it; the library owns the root’s visual placement.
+
+Views can override `OnNavigatedTo(ViewNavigatedEventArgs)` and `OnNavigatedFrom(...)`, or subscribe to their public event mirrors. Activation runs after model callbacks and once both the view and its owning window have native handlers. Pending activation is coalesced and discarded if no longer active. Attached callbacks precede `CurrentTabChanged`; deferred attachment does not delay that logical event. `Kind` distinguishes `RootInstalled`, `Pushed`, `Returned`, `TabSelected`, `TabDeselected` and `Covered`. Compatibility tabs notify children on real selection changes only; Standard tabs also notify children on cover/return. These presentation hooks do not run after terminal dismissal; exceptions are diagnostic rather than navigation failures.
+
+Public `ViewBase.ShowPopup`/`ShowPopupAsync` and `DisplayAlertAsync` target the active view’s own handled window and reject detached/hidden origins. Implement `IModalPresentationObserver` on the origin or an ancestor to receive `OnModalPresenting`/`OnModalDismissed`, with the kind, origin and Window. Registered popups share the same captured observer chain, including nested popup ancestors. Each entered observer is dismissed once after actual closure/failure/window destruction. Cancelling the result wait **does not close a visible popup or end its observation**. Direct Toolkit calls outside these helpers are not observed. Toolkit popups/alerts do not trigger view navigation callbacks; navigation modals still cover/return. Raw popup helpers reject awaited navigation callbacks; use `RequestPopup` there.
+
+For shell-owned or background notifications, use `MauiNavigationHostFactory.ShowPopupAsync(window, popup, options?, cancellationToken)` (typed or untyped), or either `DisplayAlertAsync(window, ...)` overload. These target the active handled page in that factory's window and notify the active observer chain plus the retained window root, even while it is covered. An existing Toolkit popup or window-level alert throws `ModalPresentationBusyException`; the app chooses a toast or retry policy. Registered popup origins can still nest. Window popups reject navigation callbacks; alerts can be awaited by guards on an attached live root. Pass the originating session/lifetime token. A pending request is rejected if its root changes; cancellation stops the wait, not a visible dialog. Native alert completion remains platform-owned; root replacement/window destruction balances its old observer chain.
+
+`ViewModelBase.ConstructWithParent(parent, () => new ChildModel(...))` makes a parent available in a model constructor for isolated tests or a composition root. It restores the previous parent on success/failure and clears captured background flows. It does not create navigation/DI scopes, activation or parent-child lifetime ownership. Use fake app dependencies/navigation for isolated tests; registered navigation supplies its own parent and rejects overrides. Dismiss test models explicitly through `Ownership.Lifetime`.
+
+Subscribe once to `NavigationDiagnostics.Error` in the application's logging setup; include both exception and operation. Fire-and-forget presentation and lifecycle callback failures otherwise have only debug output.
+
+
+Configure another window using the existing MAUI Window API:
+
+```csharp
+var opened = await navigation.OpenWindow<DashboardViewModel>(window =>
+{
+    window.Title = "Dashboard";
+    window.Width = 900;
+    window.Height = 650;
+    // Attach native-ready placement/resize handlers here when needed.
+});
+```
+
+Configuration runs before native open. `opened.Navigation` reports initialization, `opened.Window` retains the created window even when initialization fails, and `opened.Closed` completes after host shutdown and owned cleanup (faulting on cleanup errors). Observe that task separately from the opening command. An opening-operation cancellation closes a created window; cancelling `WaitForInitializationAsync` alone only stops waiting. `OpenNewWindow(parameters, token)` stays compatible. The new extension requires the library navigation implementation; app coordinators/adapters may use `MauiNavigationHostFactory.OpenWindow` directly. Titles, size constraints, centering and platform policy remain application code.
+
+Set `WindowBootstrapOptions.RootFailureContentFactory` when creating a window to recover from later committed root installation/activation failure. It receives the failed result after candidate cleanup and returns fresh detached ordinary content. Preparation failure leaves the old root active; cleanup-only failure leaves the healthy replacement visible. A throwing/invalid factory falls back to an error label. The policy applies to factory and entry-service root changes for that window, and is separate from initial `FailureContentFactory`. Do not mutate shared application state during preparation: only activation follows outgoing cleanup.
+
+Existing `model.Ownership.Lifetime.Reason` exposes the terminal cause. Use `IsPermanentlyDismissed`/`LifetimeToken` for general late-work guards. App base views can centrally set `IsToolbarVisible = false` and `UseDefaultBusyIndicator = false` when drawing their own chrome.
+
 ### Warnings requested during navigation
 
 Use `RequestPopup` from `BeforeFirstShown`, `Appearing` or `CanNavigate`. It returns a handle immediately; the host presents after navigation and its callbacks settle, including rejected guards. Returning from the callback is required: awaiting `request.Completion` there would prevent the operation from settling. An independent observer may await completion without being joined by the callback.
@@ -277,6 +318,33 @@ Switch to Archive, then back to Notes → Editor is still there.
 `TabBarPadding`, `TabItemSpacing` and `TabScrollBarVisibility` apply to all four tab-bar edges, including left/right rails, and can change through bindings without replacing tab models or their histories. Padding and spacing default to 4 DIP and accept zero; scrollbar visibility defaults to `Never`. `Content` sizing scrolls on the strip's axis; `Equal` sizing shares the available space and does not scroll. Center and trailing content keep the container's binding context.
 
 Tab switching retains models and their histories. `BeforeFirstShown` initializes each model once; `Appearing` runs on activation, and `Deactivated` runs when leaving. Use `Ownership.RegisterCleanup` for subscriptions that should last until permanent removal, root replacement or window closure. Activation-only subscriptions need matching activation/deactivation handling. The shared toolbar follows the selected branch, and navigation alone never requests a loading overlay.
+
+### Optional shared history and eager tabs (1.1.1 preview)
+
+Set `TabOptions` in the container model's constructor when migrating a shell that prepares every feature up front and opens detail screens above the whole tab surface:
+
+```csharp
+TabOptions = new()
+{
+    Initialization = TabInitialization.Eager,
+    DetailNavigation = TabDetailNavigation.AboveTabs,
+    Lifecycle = TabLifecycle.TabSwitchCompatibility
+};
+```
+
+These settings are independent. Defaults remain `Lazy`, `WithinTab`, and `Standard`. Eager mode constructs and initializes all declared roots, including hidden/disabled ones, but only activates the selected root. Normal `NavigateTo` calls from an `AboveTabs` branch cover the nearest configured tab container; Back restores its retained state. Guards and originating-window checks still apply.
+
+`TabSwitchCompatibility` calls the outgoing root's `AfterDismissed` on a tab switch with `IsDismissed == false`; its lifetime remains owned. Covering the container calls the container's `Disappearing`, retains child activation, and avoids repeating child `Appearing` on return. Permanent removal still marks and cleans every owned root. Use this mode only when those callbacks match the application's existing contract.
+
+`TabbedViewBase<T>` exposes `TabItems`, `CurrentTab`, and `CurrentTabChanged`. Metadata includes the declared `ViewModelType` and the prepared `ViewModel` (null for an unvisited lazy tab). A model can implement `IActivityIndicatorProvider.IsTabBusy` for tab activity independent of its page loader; raise model property changes when that activity changes.
+
+For custom desktop chrome, `TabBarContent` replaces the entire selector row, `TabBarHeight` controls its height, and `IsTabBarVisible` removes its layout space. Custom row input belongs to the app; use each item's `SelectCommand` or scoped `Select(id)`. `IsTabBarEnabled` controls the built-in selector without disabling trailing controls. `LeadingContent`, `LeadingContentWidth`, and `IsLeadingContentVisible` add a body rail below full-width shared content. `BodyRowOverlayContent` covers that rail and detail body together. All slots retain the container's binding context.
+
+The preview's minimum package dependencies are MAUI Controls 10.0.120 and Community Toolkit 15.0.1; MVVM Toolkit remains at 8.4.2. These are the latest stable versions checked on 30 October 2026. The sample uses the same versions. Its first tabs entry demonstrates shared history and eager roots, while the independent-history entry demonstrates the defaults.
+
+Since the 1.1.1-dev.2 preview, `BodyTemplate` accepts a MAUI `ControlTemplate` containing a `ContentPresenter`. It frames the tab strip, shared content, rail and detail together, leaving the header, footer and full-container overlay outside. The application supplies the border, background, corners, shadow and outer margin in that template. Set it to `null` to restore the original unframed layout without recreating destinations. `DetailMargin` insets only the detail presenter; shared content, the rail and overlays keep their bounds.
+
+`IsTabBarEnabled` controls built-in selector input. Programmatic `Select` and custom application selectors still use destination availability and `CanNavigate`. Keep application busy rules and automatic-selection retries in the application's selection adapter or model guards. Native window sizing, secondary-window callbacks and product-specific presentation modes remain application responsibilities.
 
 Flyouts have the same template-driven customization:
 
@@ -621,7 +689,7 @@ return Task.CompletedTask;
 
 Normal requests may use a nonempty `CoalescingKey` to replace older uncommitted requests with the same key. Enforced requests cannot use one. Closed factory windows return `InvalidOrigin`; null or foreign windows are argument errors. `WaitForInitializationAsync` reports the original initialization outcome even when a later request supersedes it; canceling that wait does not cancel initialization. If initialization and all submitted replacements settle without installing a root, the factory replaces its loading indicator with an error page. A late failure cannot overwrite a newer root. Applications can recover with another root request and must keep their authorization policy enforced during recovery.
 
-Content views also provide protected informational `DisplayAlertAsync(title, message, cancel)` and confirmation `DisplayAlertAsync(title, message, accept, cancel)` helpers. Both dispatch to the owning window and reject hidden or dismissed origins. Awaited guards should use bounded validation or an owned page alert; do not await registered popup navigation inside navigation callbacks.
+Content views also provide public informational `DisplayAlertAsync(title, message, cancel)` and confirmation `DisplayAlertAsync(title, message, accept, cancel)` helpers. Both dispatch to the owning window and reject hidden or dismissed origins. Awaited guards should use bounded validation or an owned page alert; do not await registered popup navigation inside navigation callbacks.
 
 ## Try the sample
 
@@ -637,6 +705,7 @@ Open **[MVVMCompass.Sample.slnx](https://github.com/Grzegorz1223/MVVMCompass/blo
 | [Toolkit popups](https://github.com/Grzegorz1223/MVVMCompass/blob/main/samples/MVVMCompass.Sample/DemoPopupView.xaml) and modals | Return a result, dismiss, and deny closure with `CanNavigate`. |
 | Guards and lifecycle | Toggle permission and verify that rejected navigation preserves the screen. |
 | Independent windows | Navigate separately on supported platforms. |
+| Compact panel | In the shared-history tabs, show the selected root’s separate panel, open its popup and watch modal depth; push a detail and return. |
 
 <details>
 <summary>Build, test, and create local packages</summary>
@@ -662,10 +731,10 @@ The pack commands create development NuGets and symbol packages in `artifacts/pa
 <details>
 <summary>Run native smoke checks</summary>
 
-The sample hosts the [native smoke tests](https://github.com/Grzegorz1223/MVVMCompass/tree/main/tests/MVVMCompass.Maui.SmokeTests). They exercise real controls, input, bounds, guards, bindings, retained state, and cleanup. The full suite also runs the preserved engine regression fixtures. Unavailable platform checks report skips; screen-reader interaction and real OS gestures require device testing.
+Build with `-p:NavigationSmokeBuild=true` to produce the separate `MVVMCompass.Maui.SmokeTests` assembly, which hosts the [native smoke tests](https://github.com/Grzegorz1223/MVVMCompass/tree/main/tests/MVVMCompass.Maui.SmokeTests). They exercise real controls, input, bounds, guards, bindings, retained state, and cleanup. The full suite also runs the preserved engine regression fixtures. Unavailable platform checks report skips; screen-reader interaction and real OS gestures require device testing.
 
 Automate with `MVVMCOMPASS_SMOKE=1` and optionally `MVVMCOMPASS_SMOKE_SUITE=unified` for the new API and layout matrix. Android extras: `mvvmcompass_smoke` (boolean), `mvvmcompass_smoke_suite` (string). Reports include `checks`, `skipped`, `suite`, and `failure`.
 
-Launch the sample with these settings to execute its embedded native suite. Maintainer scripts and performance reports are kept in the separate tools workspace.
+Launch that smoke build with these settings to execute its embedded native suite. The default `MVVMCompass.Sample` build contains only public API usage and has no friend access to the library. Maintainer scripts and performance reports are kept in the separate tools workspace.
 
 </details>

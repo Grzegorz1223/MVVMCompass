@@ -9,15 +9,26 @@ internal sealed partial class NavigationContext
     internal MauiNavigationHost Host => owner;
     internal NavigationContext RootContext => ParentContext?.RootContext ?? this;
     internal NavigationContext Deepest => Current?.Children?.Deepest ?? this;
+    internal NavigationContext DetailContext()
+    {
+        for (var candidate = this; candidate.ParentContext != null; candidate = candidate.ParentContext)
+            if (candidate.Definition.TabOptions.DetailNavigation == TabDetailNavigation.AboveTabs)
+                return candidate.ParentContext;
+        return this;
+    }
+    private bool UsesTabSwitchCompatibility => Definition.TabOptions.Lifecycle == TabLifecycle.TabSwitchCompatibility;
     private bool embeddedFlyoutOpen;
     internal bool HasOpenFlyout => IsFlyoutOpen || Current?.Children?.HasOpenFlyout == true;
     private ViewModelBase? notifiedSelection;
+    internal event EventHandler? SelectionChanged;
     private async Task NotifySelectionAsync()
     {
         var selected = active?.Stack.FirstOrDefault()?.ViewModel;
-        if (ContainerScreen == null || selected == null || ReferenceEquals(notifiedSelection, selected)) return;
+        if (ContainerScreen == null || selected == null) return;
+        if (ReferenceEquals(notifiedSelection, selected)) { Current?.View.FlushNavigation(); return; }
         notifiedSelection = selected;
-        await ContainerScreen.ViewModel.OnActiveTabChanged(selected);
+        try { await ContainerScreen.ViewModel.OnActiveTabChanged(selected); }
+        finally { Current?.View.FlushNavigation(); SelectionChanged?.Invoke(this, EventArgs.Empty); }
     }
 
     internal IEnumerable<NavigationContext> ActiveChain()
@@ -79,16 +90,30 @@ internal sealed partial class NavigationContext
             var changesActive = active?.Definition.Id != targetId || active != null && obsolete.Contains(active);
             await GuardAsync(removed.SelectMany(EndingBranch).Concat(changesActive && Current != null ? [Current] : []), operation);
             var nextState = destinations.TryGetValue(targetId, out var retained) && !obsolete.Contains(retained) ? retained : new DestinationState(desired[targetId]);
-            var candidate = nextState.Stack.Count == 0
-                ? await PrepareAsync(desired[targetId].Factory!, null, entry => operation.Own(entry), operation.CancellationToken) : null;
+            var prepared = new Dictionary<string, NavigationScreenEntry>(StringComparer.Ordinal);
+            foreach (var destination in definition.Destinations)
+            {
+                var needsRoot = !destinations.TryGetValue(destination.Id, out var existing)
+                    || obsolete.Contains(existing) || existing.Stack.Count == 0;
+                if (needsRoot && (destination.Id == targetId || definition.TabOptions.Initialization == TabInitialization.Eager))
+                    prepared.Add(destination.Id, await PrepareAsync(destination.Factory!, null,
+                        entry => operation.Own(entry), operation.CancellationToken));
+            }
+            prepared.TryGetValue(targetId, out var candidate);
             operation.BeginCommit();
-            if (changesActive && Current != null) await DeactivateAsync(Current);
-            foreach (var state in obsolete) { destinations.Remove(state.Definition.Id); items.Remove(state.Definition.Id); }
+            if (changesActive && Current != null) await DeactivateAsync(Current,
+                selectionChanged: !removed.Contains(Current));
+            foreach (var state in obsolete)
+            {
+                destinations.Remove(state.Definition.Id);
+                if (items.Remove(state.Definition.Id, out var removedItem)) removedItem.Release();
+            }
             Definition = definition;
             foreach (var destination in definition.Destinations)
             {
                 if (!destinations.TryGetValue(destination.Id, out var state)) destinations.Add(destination.Id, destination.Id == targetId ? nextState : new(destination));
                 else state.Definition = destination;
+                if (prepared.TryGetValue(destination.Id, out var ready)) destinations[destination.Id].Stack.Add(ready);
                 if (!items.TryGetValue(destination.Id, out var item))
                     items.Add(destination.Id, item = new(destination, new Command(async () => await ReportAsync(SelectAsync(destination.Id,
                         options: new() { Origin = Current?.Entry, RejectIfBusy = true })), () => IsActive && !IsNavigating &&
@@ -97,7 +122,6 @@ internal sealed partial class NavigationContext
                 item.RefreshMetadata();
             }
             active = nextState;
-            if (candidate != null) active.Stack.Add(candidate);
             menu.ReplaceWith(HasFlyout ? definition.Destinations.Select(destination => items[destination.Id]) : []);
             foreach (var screen in removed) screen.Entry.Lifetime.MarkDismissed(DismissalReason.Removed);
             Publish();
