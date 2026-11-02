@@ -145,8 +145,8 @@ internal sealed partial class MauiNavigationHost
         {
             try
             {
-                var showing = await Host.StartRegisteredPopupAsync<TResult>(Origin.Model, prepare, () => Origin.CanPresent,
-                    Token, joinCurrentOperation: true, onPresented: () => wasPresented = true);
+                var showing = await Host.StartPopupAsync<TResult>(Origin.Model, prepare, () => Origin.CanPresent,
+                    Token, joinCurrentOperation: true, onPresented: () => wasPresented = true, ownsPreparation: true);
                 _ = ObserveAsync(showing);
             }
             catch (Exception error) { Failed(error); }

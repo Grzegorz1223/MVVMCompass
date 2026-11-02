@@ -3,7 +3,7 @@ using MVVMCompass.Core;
 
 namespace MVVMCompass.Services;
 
-/// <summary>Collects owned view models in child-before-parent order, including retained content.</summary>
+/// <summary>Collects referenced view models in child-before-parent order; callers must validate ownership.</summary>
 internal static class ViewModelTree
 {
     internal static List<ViewModelBase> Collect(Element? root, bool includeModals = false)

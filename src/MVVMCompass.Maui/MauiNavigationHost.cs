@@ -222,8 +222,10 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
         IEnumerable<ViewModelBase> models, DismissalReason reason, Action<Exception>? recordError = null, bool dismissModals = false)
     {
         var tracked = OwnedWithin(page, entry);
-        var owned = models.Concat(tracked.SelectMany(OwnedModels))
-            .Where(model => CanCleanModel(model, entry)).Distinct<ViewModelBase>(ReferenceEqualityComparer.Instance).ToArray();
+        var owned = models.Where(model => CanCleanModel(model, entry))
+            .Concat(tracked.SelectMany(page => OwnedModels(page).Where(model => CanCleanModel(model, page.Entry))))
+            .Concat(page == null ? [] : PopupOwnership.ModelsFor(page))
+            .Distinct<ViewModelBase>(ReferenceEqualityComparer.Instance).ToArray();
         MarkOwnedPages(tracked, reason);
         if (reason == DismissalReason.RootReplaced)
             foreach (var model in owned) model.MarkHostReplaced();
@@ -278,7 +280,8 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
                 return;
             }
             // Native/external replacement is already irreversible. End origin validity immediately.
-            var outgoing = ViewModelTree.Collect(previous.Page, true).Where(model => CanCleanModel(model)).ToArray();
+            var outgoing = ViewModelTree.Collect(previous.Page, true).Where(model => CanCleanModel(model, previous.Entry))
+                .Concat(PopupOwnership.ModelsFor(previous.Page)).Distinct().ToArray();
             foreach (var model in outgoing)
             {
                 model.MarkHostReplaced();

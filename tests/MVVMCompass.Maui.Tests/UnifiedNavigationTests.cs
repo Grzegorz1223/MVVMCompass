@@ -412,7 +412,7 @@ public sealed partial class UnifiedNavigationTests : IAsyncDisposable
     {
         internal static TaskCompletionSource<PopupView> OpenedSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public PopupView(PopupModel model, PopupActions actions) : base(model)
-        { Opened += (_, _) => { OpenedSignal.TrySetResult(this); actions.Opened?.Invoke(this); }; }
+        { actions.Created?.Invoke(this); Opened += (_, _) => { OpenedSignal.TrySetResult(this); actions.Opened?.Invoke(this); }; }
     }
     public sealed class Detail(INavigationService navigation, Resource resource) : Leaf(navigation, resource);
     public sealed class Modal : Leaf

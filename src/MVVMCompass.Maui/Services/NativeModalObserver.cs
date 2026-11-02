@@ -24,7 +24,8 @@ internal static class NativeModalObserver
         try
         {
             await ViewModelCleanup.DismissAsync(ViewModelTree.Collect(args.Modal)
-                .Where(model => !MauiNavigationHost.IsClaimedModel(model)), DismissalReason.Back);
+                .Where(model => model.Ownership.Parent == null && !MauiNavigationHost.IsClaimedModel(model)
+                    && !NavigationEntryScope.IsOwned(model) && !PopupOwnership.IsOwnedModel(model)), DismissalReason.Back);
         }
         catch (Exception error) { NavigationDiagnostics.Report(error, "Native modal removal"); }
     }

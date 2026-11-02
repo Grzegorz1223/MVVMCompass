@@ -53,7 +53,12 @@ internal sealed class NavigationEntryScope : IAsyncDisposable
         return construction?.Scope.Services;
     }
 
-    internal static bool IsOwned(ViewModelBase model) => models.TryGetValue(model, out var scope) && scope.disposal == null;
+    internal static bool IsOwned(ViewModelBase model)
+    {
+        for (var node = model.Ownership; node != null; node = node.Parent)
+            if (node.Owner is ViewModelBase owner && models.TryGetValue(owner, out var scope) && scope.disposal == null) return true;
+        return false;
+    }
 
     internal void Own(NavigationLifetime lifetime)
     {
@@ -81,8 +86,9 @@ internal sealed class NavigationEntryScope : IAsyncDisposable
         {
             // Capture only the requested destination, not singleton VM services
             // which happen to be constructed as dependencies in the same DI call.
-            await NavigationLifetimeGroup.DismissAsync(candidates.Where(model => !IsOwned(model)
-                && !MauiNavigationHost.IsClaimedModel(model)).Select(model => model.Lifetime), DismissalReason.PreparationFailed);
+            await NavigationLifetimeGroup.DismissAsync(candidates.Where(model => model.Ownership.Parent == null && !IsOwned(model)
+                && !MauiNavigationHost.IsClaimedModel(model) && !PopupOwnership.IsOwnedModel(model))
+                .Select(model => model.Lifetime), DismissalReason.PreparationFailed);
         }
         finally { candidates.Clear(); await DisposeAsync(); }
     }

@@ -34,7 +34,8 @@ internal sealed class RegisteredScreenFactory(NavigationRegistrationBuilder regi
         try
         {
             using (scope.Construct(typeof(TViewModel))) model = destination.Model(scope.Services);
-            if (model.IsDismissed || NavigationEntryScope.IsOwned(model) || MauiNavigationHost.IsClaimedModel(model))
+            if (model.IsDismissed || model.Ownership.Parent != null || NavigationEntryScope.IsOwned(model)
+                || MauiNavigationHost.IsClaimedModel(model) || PopupOwnership.IsOwnedModel(model))
                 throw new InvalidOperationException("Popup models must be fresh and unowned.");
             scope.Own(model.Lifetime); bound = true;
             var view = destination.View(scope.Services) as CommunityToolkit.Maui.Views.Popup<TResult>

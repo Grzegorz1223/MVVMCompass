@@ -72,7 +72,7 @@ internal sealed class ScreenNavigator
             ValidateDialogOrigin();
             if (Context.Host.IsContentCallback)
                 throw new InvalidOperationException("Present popups outside navigation callbacks, or use RequestPopup for a registered popup.");
-            return await Context.Host.PresentRegisteredPopupAsync<TResult>(Screen.ViewModel,
+            return await Context.Host.PresentPopupAsync<TResult>(Screen.ViewModel,
                 _ => Task.FromResult(popup),
                 () => Context.IsActive && Context.RootContext.ContainsActiveOrigin(Screen.Entry) && Screen.View.IsAttachedTo(Context.Window),
                 token, options);

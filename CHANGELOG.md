@@ -12,6 +12,7 @@
 - Balanced modal observers across actual dismissal, root replacement and window closure, keeping popup observation separate from view navigation. Cancelling a result wait does not dismiss visible UI, and pending requests cannot cross into a replacement root.
 - Added `ModalPresentationBusyException` for overlapping window-level presentations; registered nested popups retain their existing behavior.
 - Rejected raw view popup requests from navigation callbacks before UI dispatch, preventing a wait on the navigation operation's own lock.
+- Preserved borrowed models when rejecting or closing untracked popups and when cleaning up modals. Preparation releases only its owned candidate; screen and popup factories reject models already owned by another entry, popup or parent. Root/window teardown retains cleanup of its own popup sessions.
 - Added configure-before-open window APIs and a result with the created window and asynchronous closure/cleanup completion.
 - Added `ViewModelBase.ConstructWithParent(parent, create)` for synchronous parent-aware construction without navigation entries, DI scopes or implicit lifetime ownership.
 - Added runtime Type registration with constructor-preservation annotations; unowned navigator resolution now fails immediately with migration guidance.

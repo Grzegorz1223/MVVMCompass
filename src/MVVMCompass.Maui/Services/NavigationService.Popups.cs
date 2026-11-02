@@ -42,9 +42,9 @@ internal sealed partial class NavigationService
     {
         if (!Valid && !ValidPopupOrigin) throw new InvalidOperationException("A popup requires an active navigation origin.");
         if (context!.Host.IsContentCallback) throw new InvalidOperationException("Present popups outside initialization and navigation callbacks.");
-        return await context.Host.PresentRegisteredPopupAsync<TResult>(popupModel ?? screen!.ViewModel,
+        return await context.Host.PresentPopupAsync<TResult>(popupModel ?? screen!.ViewModel,
             token => registry.PreparePopupAsync<TViewModel, TResult>(context, parameters, token),
-            () => popup == null ? Valid : ValidPopupOrigin, cancellationToken);
+            () => popup == null ? Valid : ValidPopupOrigin, cancellationToken, ownsPreparation: true);
     });
 
     public Task<NavigationResult> ClosePopup<TResult>(TResult result, CancellationToken cancellationToken = default) =>

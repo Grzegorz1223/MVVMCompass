@@ -1,4 +1,6 @@
 using Microsoft.Maui.Dispatching;
+using MVVMCompass.Core;
+using MVVMCompass.Interfaces;
 using MVVMCompass.Services;
 
 namespace MVVMCompass;
@@ -8,16 +10,17 @@ internal sealed partial class MauiNavigationHost
     private readonly object popupPreparationGate = new();
     private readonly HashSet<Task> popupPreparations = [];
 
-    internal Task<PopupNavigationResult<TResult>> PresentRegisteredPopupAsync<TResult>(ViewModelBase origin,
+    internal Task<PopupNavigationResult<TResult>> PresentPopupAsync<TResult>(ViewModelBase origin,
         Func<CancellationToken, Task<View>> prepare, Func<bool> validOrigin, CancellationToken token,
-        CommunityToolkit.Maui.IPopupOptions? options = null) =>
-        Window.Dispatcher.DispatchAsync(async () => await await StartRegisteredPopupAsync<TResult>(origin, prepare, validOrigin, token, options: options));
+        CommunityToolkit.Maui.IPopupOptions? options = null, bool ownsPreparation = false) =>
+        Window.Dispatcher.DispatchAsync(async () => await await StartPopupAsync<TResult>(origin, prepare, validOrigin, token,
+            options: options, ownsPreparation: ownsPreparation));
 
     // Returns after native installation; its inner task represents interaction and terminal cleanup.
-    private async Task<Task<PopupNavigationResult<TResult>>> StartRegisteredPopupAsync<TResult>(ViewModelBase origin,
+    private async Task<Task<PopupNavigationResult<TResult>>> StartPopupAsync<TResult>(ViewModelBase origin,
         Func<CancellationToken, Task<View>> prepare, Func<bool> validOrigin, CancellationToken token,
         bool joinCurrentOperation = false, Action? onPresented = null, CommunityToolkit.Maui.IPopupOptions? options = null,
-        Func<ModalPresentationScope>? observe = null)
+        Func<ModalPresentationScope>? observe = null, bool ownsPreparation = false)
     {
         var prepared = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         lock (popupPreparationGate)
@@ -30,16 +33,18 @@ internal sealed partial class MauiNavigationHost
         {
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, closingToken, origin.Lifetime.Token);
             View? popup = null;
+            ViewModelBase? preparedModel = null;
             try
             {
                 return await RunPopupOperationAsync(async () =>
                 {
                     if (!validOrigin()) throw new InvalidOperationException("The popup origin is no longer active.");
                     popup = await prepare(linked.Token);
+                    if (ownsPreparation && popup is IHasVM candidate) preparedModel = candidate.ViewModel;
                     linked.Token.ThrowIfCancellationRequested();
                     if (!validOrigin()) throw new InvalidOperationException("The popup origin changed during preparation.");
                     var presented = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                    var result = PopupOwnership.ShowAsync<TResult>(Window, popup, origin, token, presented, options, observe);
+                    var result = PopupOwnership.ShowAsync<TResult>(Window, popup, origin, token, presented, options, observe, preparedModel);
                     try
                     {
                         await Task.WhenAny(presented.Task, result);
@@ -54,10 +59,12 @@ internal sealed partial class MauiNavigationHost
             }
             catch
             {
-                if (popup != null && !PopupOwnership.IsPresented(Window, popup))
+                // A rejected raw popup has not transferred ownership. Registered preparation
+                // owns its model and explicit children, never arbitrary binding contexts.
+                if (preparedModel != null && popup != null && !PopupOwnership.IsPresented(Window, popup))
                     await RunPopupOperationAsync(async () =>
                     {
-                        await MVVMCompass.Core.NavigationLifetimeGroup.DismissAsync(ViewModelTree.Collect(popup).Select(model => model.Lifetime), MVVMCompass.Core.DismissalReason.PreparationFailed);
+                        await preparedModel.Lifetime.DismissAsync(DismissalReason.PreparationFailed);
                         return true;
                     }, joinCurrentOperation: true);
                 throw;

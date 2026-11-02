@@ -80,7 +80,7 @@ internal sealed partial class MauiNavigationHost
     {
         foreach (var page in pages)
         {
-            foreach (var model in OwnedModels(page).Where(model => CanCleanModel(model)))
+            foreach (var model in OwnedModels(page).Where(model => CanCleanModel(model, page.Entry)))
             {
                 if (reason == DismissalReason.RootReplaced) model.MarkHostReplaced();
                 model.Lifetime.MarkDismissed(reason);
@@ -100,7 +100,7 @@ internal sealed partial class MauiNavigationHost
     }
 
     private IEnumerable<NavigationLifetime> OwnedLifetimes(IEnumerable<MauiNavigationPage> pages) =>
-        pages.SelectMany(page => OwnedModels(page).Where(model => CanCleanModel(model))
+        pages.SelectMany(page => OwnedModels(page).Where(model => CanCleanModel(model, page.Entry))
             .Select(model => model.Lifetime).Append(page.Entry.Lifetime));
 
     private NavigationEntry[] AllEntries() => ownedPages.SelectMany(page =>
@@ -109,12 +109,19 @@ internal sealed partial class MauiNavigationHost
 
     // A model claimed by another host must never be adopted or cleaned by this one.
     internal static bool IsClaimedModel(ViewModelBase model)
-    { lock (claims) return claims.TryGetValue(model, out _); }
-
-    private bool CanCleanModel(ViewModelBase model, NavigationEntry? candidate = null)
     {
-        lock (claims) return !claims.TryGetValue(model, out var lifetime) || candidate?.Lifetime == lifetime
-            || AllEntries().Any(entry => entry.Lifetime == lifetime);
+        lock (claims)
+            for (var node = model.Ownership; node != null; node = node.Parent)
+                if (node.Owner is { } owner && claims.TryGetValue(owner, out _)) return true;
+        return false;
+    }
+
+    private static bool CanCleanModel(ViewModelBase model, NavigationEntry? owner)
+    {
+        if (owner?.Ownership.Contains(model.Lifetime) == true) return true;
+        // A binding may borrow a model from another entry, even within this window.
+        return model.Ownership.Parent == null && !IsClaimedModel(model)
+            && !NavigationEntryScope.IsOwned(model) && !PopupOwnership.IsOwnedModel(model);
     }
 
     private NavigationEntry[] NativeVisibleEntries()

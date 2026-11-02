@@ -19,7 +19,7 @@ internal sealed partial class MauiNavigationHost
                 throw new InvalidOperationException("Present popups outside navigation callbacks, or use RequestPopup for a registered popup.");
             ValidateWindowDialog(root);
             NavigationContext? presentationContext = null;
-            return await await StartRegisteredPopupAsync<TResult>(root.Entry.ViewModel.StackRoot!.ViewModel,
+            return await await StartPopupAsync<TResult>(root.Entry.ViewModel.StackRoot!.ViewModel,
                 _ => Task.FromResult(popup), () => { presentationContext = ValidateWindowDialog(root); return true; }, token, options: options,
                 observe: () => ModalPresentationScope.BeginWindow(presentationContext!, root.Entry.ViewModel, ModalPresentationKind.Popup));
         });

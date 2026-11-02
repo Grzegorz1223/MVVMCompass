@@ -107,8 +107,12 @@ internal sealed partial class MauiNavigationHost
         return result.IsSuccess && result.Value;
     }
 
-    internal NavigationEntry<ViewModelBase> ClaimContentScreen(ViewModelBase model) =>
-        Claim(model, () => coordinator.AttachEntry(model, model.Lifetime));
+    internal NavigationEntry<ViewModelBase> ClaimContentScreen(ViewModelBase model)
+    {
+        if (model.Ownership.Parent != null || NavigationEntryScope.IsOwned(model) || PopupOwnership.IsOwnedModel(model))
+            throw new InvalidOperationException("Each navigation entry requires a fresh, unowned view model.");
+        return Claim(model, () => coordinator.AttachEntry(model, model.Lifetime));
+    }
 
     internal NavigationEntry<NavigationContext> CreateContentScope(NavigationContext context) =>
         Claim(context, () => coordinator.CreateEntry(context));

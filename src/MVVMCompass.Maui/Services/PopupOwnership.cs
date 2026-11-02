@@ -42,6 +42,8 @@ internal static class PopupOwnership
         && session.Page != null && ReferenceEquals(window.Navigation.ModalStack.LastOrDefault(), session.Page);
 
     internal static bool HasSessions(Window window) => windows.TryGetValue(window, out var state) && state.Active.Any();
+    internal static bool IsOwnedModel(ViewModelBase model) => windows.SelectMany(pair => pair.Value.Active)
+        .Any(session => session.Models.Any(owner => owner.Ownership.Contains(model.Lifetime)));
     internal static bool IsPresented(Window window, View popup) => sessions.TryGetValue(popup, out var session)
         && session.Page != null && window.Navigation.ModalStack.Contains(session.Page);
 
@@ -50,11 +52,12 @@ internal static class PopupOwnership
 
     internal static async Task<PopupNavigationResult<TResult>> ShowAsync<TResult>(Window window, View view,
         ViewModelBase? origin = null, CancellationToken cancellationToken = default, TaskCompletionSource? presented = null,
-        CommunityToolkit.Maui.IPopupOptions? options = null, Func<ModalPresentationScope>? observe = null)
+        CommunityToolkit.Maui.IPopupOptions? options = null, Func<ModalPresentationScope>? observe = null,
+        ViewModelBase? preparedModel = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (origin?.IsDismissed == true) throw new InvalidOperationException("A dismissed view model cannot present a popup.");
-        var session = Create(window, view, origin);
+        var session = Create(window, view, origin, preparedModel);
         session.Presented = presented;
         return await session.ShowAsync<TResult>(cancellationToken, options, observe);
     }
@@ -81,17 +84,16 @@ internal static class PopupOwnership
 
     internal static async Task CloseAsync(Popup popup, Func<Task> close, CancellationToken token, bool hasResult = false)
     {
-        if (!sessions.TryGetValue(popup, out var session)) { await CloseUntrackedAsync(popup, close, token); return; }
+        if (!sessions.TryGetValue(popup, out var session))
+        {
+            // Without an accepted session, bindings are references rather than owned models.
+            token.ThrowIfCancellationRequested();
+            await close();
+            return;
+        }
         var previous = session.HasResult; session.HasResult = hasResult;
         try { await session.CloseAsync(close, token); }
         catch { session.HasResult = previous; throw; }
-    }
-
-    private static async Task CloseUntrackedAsync(Popup popup, Func<Task> close, CancellationToken token)
-    {
-        token.ThrowIfCancellationRequested();
-        await close();
-        await NavigationLifetimeGroup.DismissAsync(ViewModelTree.Collect(popup).Select(model => model.Lifetime), DismissalReason.DialogClosed);
     }
 
     internal static async Task CloseTopAsync(Window window, CancellationToken token = default)
@@ -142,15 +144,20 @@ internal static class PopupOwnership
         if (errors.Count != 0) throw new AggregateException(errors);
     }
 
-    private static Session Create(Window window, View view, ViewModelBase? origin)
+    private static Session Create(Window window, View view, ViewModelBase? origin, ViewModelBase? preparedModel = null)
     {
         if (sessions.TryGetValue(view, out _)) throw new InvalidOperationException("This popup already has an active presentation.");
         var models = ViewModelTree.Collect(view).ToArray();
         if (models.Any(model => model.IsDismissed)) throw new InvalidOperationException("A popup presentation requires fresh, live view models.");
         if (models.Any(MauiNavigationHost.IsClaimedModel))
             throw new InvalidOperationException("A popup cannot borrow a model owned by another navigation entry.");
+        if (models.Any(model => NavigationEntryScope.IsOwned(model)
+            && preparedModel?.Ownership.Contains(model.Lifetime) != true))
+            throw new InvalidOperationException("A popup cannot borrow a model owned by another entry scope.");
+        if (models.Any(model => model.Ownership.Parent is { } parent && !models.Any(owner => owner.Ownership == parent)))
+            throw new InvalidOperationException("A popup cannot borrow a model owned outside its model tree.");
         var state = ForWindow(window);
-        if (windows.SelectMany(pair => pair.Value.Active).Any(item => item.Models.Intersect(models).Any()))
+        if (models.Any(IsOwnedModel))
             throw new InvalidOperationException("A popup model already belongs to another presentation.");
         var session = new Session(state, view, origin, models);
         sessions.Add(view, session);
