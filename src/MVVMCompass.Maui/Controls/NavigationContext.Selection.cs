@@ -47,7 +47,6 @@ internal sealed partial class NavigationContext
         }
         foreach (var step in staged) step.Context.Publish();
         await ActivateAsync(Current!, ViewNavigationKind.TabSelected);
-        foreach (var step in staged) await step.Context.NotifySelectionAsync();
         return Deepest.Current;
     }, token);
 

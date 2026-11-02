@@ -131,7 +131,6 @@ internal sealed partial class NavigationContext
                 try { await DismissAsync(removed, DismissalReason.Removed); }
                 finally { if (Current != null) await ActivateAsync(Current); }
             }
-            await NotifySelectionAsync();
             return Current;
         }, token);
         return NavigationResult.From(result);

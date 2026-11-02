@@ -7,6 +7,7 @@
 - Added an optional body control template and detail margin for application-owned framing around retained tab and flyout content. Headers, footers and full-container overlays stay outside the frame; removing the template preserves retained state.
 - Reduced tab activity updates to metadata changes without navigation layout reconciliation. Tab input availability remains separate from model navigation guards.
 - Added view navigation callbacks that wait for native attachment. Covered compatibility tabs preserve undelivered activation until return and attachment, without repeating model activation or already delivered callbacks.
+- Completed view and selection notifications for Back, Back-to-root, tab removal, reset, list replacement and failed-switch recovery, including outgoing cleanup failures. Parent selection updates precede view callbacks when restoring retained details.
 - Added raw Toolkit popup and alert helpers, plus explicit-window APIs for covered containers and inactive-tab notifications.
 - Balanced modal observers across actual dismissal, root replacement and window closure, keeping popup observation separate from view navigation. Cancelling a result wait does not dismiss visible UI, and pending requests cannot cross into a replacement root.
 - Added `ModalPresentationBusyException` for overlapping window-level presentations; registered nested popups retain their existing behavior.

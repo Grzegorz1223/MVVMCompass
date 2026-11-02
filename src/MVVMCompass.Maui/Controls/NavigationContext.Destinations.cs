@@ -29,7 +29,6 @@ internal sealed partial class NavigationContext
             try { await DismissAsync(removed, DismissalReason.Removed); }
             finally { if (candidate != null && target == active) await ActivateAsync(candidate); }
         }
-        if (target == active) await NotifySelectionAsync();
         return Current;
     }, cancellationToken);
 

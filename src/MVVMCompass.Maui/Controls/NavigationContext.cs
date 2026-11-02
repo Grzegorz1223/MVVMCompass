@@ -180,7 +180,6 @@ internal sealed partial class NavigationContext : ObservableObject, INavigationI
     {
         covered = false;
         if (Current != null) await ActivateAsync(Current);
-        await NotifySelectionAsync();
         Publish();
     }
     async Task INavigationAware.DeactivateAsync()
@@ -295,7 +294,6 @@ internal sealed partial class NavigationContext : ObservableObject, INavigationI
         Publish();
         await View.Presenter.PresentAsync(Current!.View, false);
         await ActivateAsync(Current, ViewNavigationKind.TabSelected);
-        await NotifySelectionAsync();
         return Current;
     }, cancellationToken);
 
@@ -476,7 +474,10 @@ internal sealed partial class NavigationContext : ObservableObject, INavigationI
         // A child's deactivation can fail before its parent becomes inactive.
         // Restore that child even when the parent's entry is already active.
         if (screen.Children != null) await ((INavigationAware)screen.Children).ActivateAsync(screen.Entry.Lifetime.Token);
-        if (ContainerScreen == null || active?.Stack.FirstOrDefault() != screen) screen.View.FlushNavigation();
+        // Every activation path completes notifications, including return and cleanup recovery.
+        // Update the parent's selection before delivering either its root or retained detail view.
+        if (ContainerScreen == null) screen.View.FlushNavigation();
+        else await NotifySelectionAsync();
     }
     private async Task DeactivateAsync(NavigationScreenEntry screen, bool selectionChanged = false)
     {
