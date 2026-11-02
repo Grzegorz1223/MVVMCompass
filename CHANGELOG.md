@@ -1,48 +1,26 @@
 # Changelog
 
-## 1.1.1-dev.7 (local preview)
+## 1.2.0 (unreleased)
 
-- Renamed the shared tab and container layout partials from Desktop to Layout; these controls apply on all supported platforms.
-- Removed the internal native-page navigation engine, its locator and retained-container adapters. Registration, content navigation, popups and window teardown now use one ownership path.
-- Extracted shared model cleanup and native modal observation, preserving public API compatibility and the optional tab-switch lifecycle.
-- Migrated relevant cleanup tests to the current API and retired tests and smoke scenarios for removed internal contracts.
-
-## 1.1.1-dev.5 (local preview)
-
-- Added explicit-window popup and alert APIs for covered containers and inactive-tab notifications, using the existing host and popup ownership machinery.
+- Added opt-in eager tab initialization, detail navigation above tabs, and retained tab-switch compatibility callbacks, preserving existing tab and flyout defaults.
+- Added public tab metadata, independent activity indicators, custom tab rows, body rails, and body-row overlays. Retained destination root views are available as read-only metadata and cleared when released.
+- Added an optional body control template and detail margin for application-owned framing around retained tab and flyout content. Headers, footers and full-container overlays stay outside the frame; removing the template preserves retained state.
+- Reduced tab activity updates to metadata changes without navigation layout reconciliation. Tab input availability remains separate from model navigation guards.
+- Added view navigation callbacks that wait for native attachment. Covered compatibility tabs preserve undelivered activation until return and attachment, without repeating model activation or already delivered callbacks.
+- Added raw Toolkit popup and alert helpers, plus explicit-window APIs for covered containers and inactive-tab notifications.
+- Balanced modal observers across actual dismissal, root replacement and window closure, keeping popup observation separate from view navigation. Cancelling a result wait does not dismiss visible UI, and pending requests cannot cross into a replacement root.
 - Added `ModalPresentationBusyException` for overlapping window-level presentations; registered nested popups retain their existing behavior.
-- Balanced observers across actual dismissal, root replacement and window closure; cancellation of a result wait does not dismiss visible UI. Pending requests cannot cross into a replacement root.
-- Added `ViewModelBase.ConstructWithParent(parent, create)` for synchronous parent-aware construction without navigation entries, DI scopes or implicit lifetime ownership.
-- Corrected the external desktop migration guide and removed workload-set pins from both sample-bundle SDK files; the Windows helper records the installed toolchain without installing workloads.
-
-## 1.1.1-dev.4 (local preview)
-
-- Exposed retained destination root views as read-only metadata, clearing references when released.
-- Added native-attachment-deferred view navigation callbacks, preserving tab-switch compatibility and keeping popup observation separate.
-- Added public raw Toolkit popup/alert helpers and balanced modal observation tied to actual popup lifetime, including cancellation of a result wait.
+- Rejected raw view popup requests from navigation callbacks before UI dispatch, preventing a wait on the navigation operation's own lock.
 - Added configure-before-open window APIs and a result with the created window and asynchronous closure/cleanup completion.
+- Added `ViewModelBase.ConstructWithParent(parent, create)` for synchronous parent-aware construction without navigation entries, DI scopes or implicit lifetime ownership.
 - Added runtime Type registration with constructor-preservation annotations; unowned navigator resolution now fails immediately with migration guidance.
 - Added opt-in per-window fallback content after committed root installation/activation failure; preparation and cleanup-only failures preserve the appropriate live root.
-- Made the ordinary sample public-API-only; native smoke fixtures build as a separate friend assembly. Added a generic compact-panel and modal-depth demonstration.
-
-## 1.1.1-dev.3 (local preview)
-
-- Updated the library's minimum dependencies to MAUI Controls 10.0.120 and Community Toolkit 15.0.1, matching the sample and DentalBee 3. MVVM Toolkit 8.4.2 remains current.
-- Updated test dependencies to xUnit MTP v2 4.0.2 and Microsoft.Testing.Platform.MSBuild 2.5.2, the latest stable versions checked on 30 October 2026.
-
-## 1.1.1-dev.2 (local preview)
-
-- Added an optional body control template and detail margin for application-owned framing around retained tab and flyout content.
-- Kept header/footer and full-container overlays outside the frame; removing the template restores the original body and retained state.
-- Added frame-transition regression coverage and clarified that tab input availability does not replace model navigation guards.
-
-## 1.1.1-dev.1 (local preview)
-
-- Added opt-in eager tab initialization, detail navigation above tabs, and retained tab-switch compatibility callbacks.
-- Added public tab metadata and independent activity indicators, custom tab rows, body rails, and body-row overlays.
-- Reduced tab activity updates to metadata changes without navigation layout reconciliation.
-- Lowered minimum MAUI Controls and Community Toolkit dependencies to 10.0.90 and 14.2.2; existing tab and flyout defaults remain unchanged.
-- Added shared-history sample navigation and regression coverage for both behaviors.
+- Unified registration, content navigation, popups, model cleanup and window teardown under one ownership path, removing the internal native-page navigation engine, locator and retained-container adapters while preserving public API compatibility.
+- Renamed shared tab and container layout partials from Desktop to Layout to reflect their use on all supported platforms.
+- Updated library dependencies to MAUI Controls 10.0.120, Community Toolkit 15.0.1 and MVVM Toolkit 8.4.2, matching the sample and DentalBee 3. Updated test dependencies to xUnit MTP v2 4.0.2 and Microsoft.Testing.Platform.MSBuild 2.5.2.
+- Updated the sample to use public APIs, added shared-history, compact-panel and modal-depth examples, and moved native smoke fixtures to a separate friend assembly.
+- Migrated cleanup tests to the current API, retired coverage for removed internal contracts, and added regression coverage for framing, tab lifecycle and popup dispatch.
+- Updated the desktop migration guide and removed workload-set pins from the repository and sample-bundle SDK files. The Windows helper records the installed toolchain without installing workloads.
 
 ## 1.1.0
 

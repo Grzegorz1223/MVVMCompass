@@ -120,7 +120,7 @@ The library has one content-navigation engine. `Controls/*.Layout.cs` builds sha
 
 The window host coordinates navigation, ownership, cancellation, popups and terminal cleanup. Application session policy, recording, PMS integrations, refresh rules and window styling belong in the application. `TabLifecycle.TabSwitchCompatibility` remains an explicit option on the current engine. The previously published `MauiNavigationOperation` and `MauiNavigationException` types remain for API compatibility; they do not retain the old engine.
 
-### Desktop integration (1.1.1-dev.7 preview)
+### Desktop integration (1.2.0)
 
 `NavigationRegistrationBuilder.Add(Type viewModel, Type view)` and `builder.AddViewModelViewPair(Type, Type)` support module-supplied registrations with the same validation, lifetimes and registry freezing as generic registration. When trimming, preserve public constructors through the application’s own runtime type pipeline. Resolving `INavigationService` outside an owned entry now throws immediately. Pass an entry’s injected service/commands to helpers; use `MauiNavigationHostFactory` and an explicit Window for application navigation.
 
@@ -319,7 +319,7 @@ Switch to Archive, then back to Notes → Editor is still there.
 
 Tab switching retains models and their histories. `BeforeFirstShown` initializes each model once; `Appearing` runs on activation, and `Deactivated` runs when leaving. Use `Ownership.RegisterCleanup` for subscriptions that should last until permanent removal, root replacement or window closure. Activation-only subscriptions need matching activation/deactivation handling. The shared toolbar follows the selected branch, and navigation alone never requests a loading overlay.
 
-### Optional shared history and eager tabs (1.1.1 preview)
+### Optional shared history and eager tabs (1.2.0)
 
 Set `TabOptions` in the container model's constructor when migrating a shell that prepares every feature up front and opens detail screens above the whole tab surface:
 
@@ -340,9 +340,9 @@ These settings are independent. Defaults remain `Lazy`, `WithinTab`, and `Standa
 
 For custom desktop chrome, `TabBarContent` replaces the entire selector row, `TabBarHeight` controls its height, and `IsTabBarVisible` removes its layout space. Custom row input belongs to the app; use each item's `SelectCommand` or scoped `Select(id)`. `IsTabBarEnabled` controls the built-in selector without disabling trailing controls. `LeadingContent`, `LeadingContentWidth`, and `IsLeadingContentVisible` add a body rail below full-width shared content. `BodyRowOverlayContent` covers that rail and detail body together. All slots retain the container's binding context.
 
-The preview's minimum package dependencies are MAUI Controls 10.0.120 and Community Toolkit 15.0.1; MVVM Toolkit remains at 8.4.2. These are the latest stable versions checked on 30 October 2026. The sample uses the same versions. Its first tabs entry demonstrates shared history and eager roots, while the independent-history entry demonstrates the defaults.
+The library's minimum package dependencies are MAUI Controls 10.0.120, Community Toolkit 15.0.1 and MVVM Toolkit 8.4.2. The sample uses the same versions. Its first tabs entry demonstrates shared history and eager roots, while the independent-history entry demonstrates the defaults.
 
-Since the 1.1.1-dev.2 preview, `BodyTemplate` accepts a MAUI `ControlTemplate` containing a `ContentPresenter`. It frames the tab strip, shared content, rail and detail together, leaving the header, footer and full-container overlay outside. The application supplies the border, background, corners, shadow and outer margin in that template. Set it to `null` to restore the original unframed layout without recreating destinations. `DetailMargin` insets only the detail presenter; shared content, the rail and overlays keep their bounds.
+In 1.2.0, `BodyTemplate` accepts a MAUI `ControlTemplate` containing a `ContentPresenter`. It frames the tab strip, shared content, rail and detail together, leaving the header, footer and full-container overlay outside. The application supplies the border, background, corners, shadow and outer margin in that template. Set it to `null` to restore the original unframed layout without recreating destinations. `DetailMargin` insets only the detail presenter; shared content, the rail and overlays keep their bounds.
 
 `IsTabBarEnabled` controls built-in selector input. Programmatic `Select` and custom application selectors still use destination availability and `CanNavigate`. Keep application busy rules and automatic-selection retries in the application's selection adapter or model guards. Native window sizing, secondary-window callbacks and product-specific presentation modes remain application responsibilities.
 

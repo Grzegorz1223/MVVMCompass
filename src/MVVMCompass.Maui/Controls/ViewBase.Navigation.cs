@@ -54,7 +54,8 @@ public abstract partial class ViewBase
         DeliverNavigation();
     }
 
-    internal void CancelPendingNavigation() => pendingNavigation = null;
+    // A retained view keeps its undelivered activation until the return path flushes it.
+    internal void SuspendNavigation() => navigationReady = false;
     internal void RetryNavigationAttachment() => DeliverNavigation();
 
     internal void LeaveNavigation(ViewNavigationKind kind, Window window)

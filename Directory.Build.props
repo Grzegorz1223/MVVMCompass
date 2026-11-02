@@ -6,8 +6,7 @@
     <LangVersion>14.0</LangVersion>
     <Deterministic>true</Deterministic>
     <DebugType>portable</DebugType>
-    <VersionPrefix>1.1.1</VersionPrefix>
-    <VersionSuffix Condition="'$(NavigationPublicRelease)' != 'true'">dev.7</VersionSuffix>
+    <VersionPrefix>1.2.0</VersionPrefix>
     <IsPackable>false</IsPackable>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <NuGetLockFilePath Condition="'$(RuntimeIdentifier)' != ''">$(MSBuildProjectDirectory)/obj/packages.$(RuntimeIdentifier).lock.json</NuGetLockFilePath>

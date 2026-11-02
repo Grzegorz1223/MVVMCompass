@@ -488,7 +488,7 @@ internal sealed partial class NavigationContext : ObservableObject, INavigationI
                 // The container owns covered-page notifications. Keep the selected child active
                 // so returning does not repeat activation or interrupt shared background work.
                 retained.covered = true;
-                foreach (var child in retained.ActiveChain()) child.Current?.View.CancelPendingNavigation();
+                foreach (var child in retained.ActiveChain()) child.Current?.View.SuspendNavigation();
                 retained.Publish();
                 await screen.Entry.DeactivateAsync();
                 if (selectionChanged && UsesTabSwitchCompatibility) await screen.ViewModel.AfterDismissed();

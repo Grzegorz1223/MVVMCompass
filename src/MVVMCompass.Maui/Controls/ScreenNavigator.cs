@@ -61,8 +61,13 @@ internal sealed class ScreenNavigator
         });
 
     internal Task<CommunityToolkit.Maui.Core.IPopupResult<TResult>> ShowPopupAsync<TResult>(View popup,
-        CommunityToolkit.Maui.IPopupOptions? options, CancellationToken token) =>
-        Context.Window.Dispatcher.DispatchAsync<CommunityToolkit.Maui.Core.IPopupResult<TResult>>(async () =>
+        CommunityToolkit.Maui.IPopupOptions? options, CancellationToken token)
+    {
+        // Native dispatchers need not preserve the navigation callback's ExecutionContext.
+        if (Context.Host.IsContentCallback)
+            return Task.FromException<CommunityToolkit.Maui.Core.IPopupResult<TResult>>(
+                new InvalidOperationException("Present popups outside navigation callbacks, or use RequestPopup for a registered popup."));
+        return Context.Window.Dispatcher.DispatchAsync<CommunityToolkit.Maui.Core.IPopupResult<TResult>>(async () =>
         {
             ValidateDialogOrigin();
             if (Context.Host.IsContentCallback)
@@ -72,6 +77,7 @@ internal sealed class ScreenNavigator
                 () => Context.IsActive && Context.RootContext.ContainsActiveOrigin(Screen.Entry) && Screen.View.IsAttachedTo(Context.Window),
                 token, options);
         });
+    }
 
     private void ValidateDialogOrigin()
     {

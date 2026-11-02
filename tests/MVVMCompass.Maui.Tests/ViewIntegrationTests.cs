@@ -93,6 +93,64 @@ public sealed partial class UnifiedNavigationTests
         Assert.Equal(compatibility ? [] : new[] { ViewNavigationKind.Covered, ViewNavigationKind.Returned }, childEvents);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Deferred_tab_activation_survives_cover_and_waits_for_return_and_attachment(bool compatibility, bool attachWhileCovered)
+    {
+        Profile.Options = new() { Initialization = TabInitialization.Eager, DetailNavigation = TabDetailNavigation.AboveTabs,
+            Lifecycle = compatibility ? TabLifecycle.TabSwitchCompatibility : TabLifecycle.Standard };
+        var root = await Open<ProfileTabs>(); var parent = (ProfileTabsView)root.Current!.View;
+        var child = (ProfileLeafView)parent.CurrentTab!.View!;
+        var events = new List<ViewNavigationKind>();
+        child.NavigatedTo += (_, args) => events.Add(args.Kind);
+        AttachDesktop(root.Window, parent);
+        Assert.Null(child.Handler); Assert.Empty(events);
+
+        Success(await parent.ViewModel.Navigation.NavigateTo<Detail>(cancellationToken: Token));
+        if (attachWhileCovered) child.Handler = new TestNavigationHandler();
+        Assert.Empty(events);
+        Success(await ((Leaf)root.Current!.ViewModel).Navigation.NavigateBack(Token));
+        Assert.Same(child, parent.CurrentTab!.View);
+        if (!attachWhileCovered)
+        {
+            Assert.Empty(events);
+            child.Handler = new TestNavigationHandler();
+        }
+        Assert.Equal([compatibility ? ViewNavigationKind.TabSelected : ViewNavigationKind.Returned], events);
+        Assert.Equal(1, child.ViewModel.Initializations);
+        Assert.Equal(compatibility ? 1 : 2, child.ViewModel.Appearances);
+        Assert.False(child.ViewModel.LifetimeEnded);
+
+        child.Handler = new TestNavigationHandler();
+        Assert.Single(events);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Deferred_tab_activation_after_cover_is_discarded_on_deselection_or_dismissal(bool dismiss)
+    {
+        CompatibilityProfile();
+        var root = await Open<ProfileTabs>(); var parent = (ProfileTabsView)root.Current!.View;
+        var child = (ProfileLeafView)parent.CurrentTab!.View!;
+        var count = 0; child.NavigatedTo += (_, _) => count++;
+        AttachDesktop(root.Window, parent);
+        Success(await parent.ViewModel.Navigation.NavigateTo<Detail>(cancellationToken: Token));
+        if (dismiss) Success(await factory.SetRoot<Leaf>(root.Window, cancellationToken: Token));
+        else
+        {
+            Success(await ((Leaf)root.Current!.ViewModel).Navigation.NavigateBack(Token));
+            Success(await parent.ViewModel.Navigation.Select("two", cancellationToken: Token));
+        }
+
+        child.Handler = new TestNavigationHandler();
+        Assert.Equal(0, count);
+        Assert.Equal(dismiss, child.ViewModel.IsDismissed);
+    }
+
     [Fact]
     public async Task Deferred_view_notification_never_runs_after_dismissal_and_callback_failure_does_not_break_navigation()
     {
@@ -107,6 +165,43 @@ public sealed partial class UnifiedNavigationTests
         Assert.False(current.ViewModel.IsDismissed);
         Success(await ((Leaf)current.ViewModel).Navigation.NavigateTo<Detail>(cancellationToken: Token));
     }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public Task Raw_popup_from_a_navigation_guard_is_rejected_on_ui_and_background_threads(bool background, bool typed) => OnRootUI(async () =>
+    {
+        var root = await Open<Leaf>(); var origin = root.Current!.View;
+        var leaf = (Leaf)origin.ViewModel;
+        AttachDesktop(root.Window, origin);
+        using var cancellation = new CancellationTokenSource();
+        var popup = new Popup(); var typedPopup = new Popup<string>();
+        Exception? popupError = null;
+        Task Show() => typed ? origin.ShowPopupAsync(typedPopup, token: cancellation.Token)
+            : origin.ShowPopupAsync(popup, token: cancellation.Token);
+        async Task<bool> Guard()
+        {
+            try
+            {
+                popupError = await Record.ExceptionAsync(() => Show().WaitAsync(TimeSpan.FromSeconds(3), Token));
+                return false;
+            }
+            finally
+            {
+                // Release a blocked popup wait if the regression returns, so teardown can finish.
+                cancellation.Cancel();
+            }
+        }
+        leaf.Guard = () => background ? Task.Run(Guard, Token) : Guard();
+
+        var result = await Settle(leaf.Navigation.NavigateTo<Detail>(cancellationToken: Token));
+        Assert.Equal(NavigationStatus.GuardRejected, result.Status);
+        Assert.Contains("RequestPopup", Assert.IsType<InvalidOperationException>(popupError).Message);
+        Assert.Same(origin, root.Current!.View);
+        Assert.Empty(root.Window.Navigation.ModalStack);
+    });
 
     [Fact]
     public Task Raw_popup_cancellation_keeps_observation_until_actual_close_in_the_origin_window() => OnRootUI(async () =>

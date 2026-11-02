@@ -318,7 +318,7 @@
         "dependencies": {
           "CommunityToolkit.Maui": "[15.0.1, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
-          "MVVMCompass.Core": "[1.1.1-dev.4, )",
+          "MVVMCompass.Core": "[1.2.0, )",
           "Microsoft.Maui.Controls": "[10.0.120, )"
         }
       }
