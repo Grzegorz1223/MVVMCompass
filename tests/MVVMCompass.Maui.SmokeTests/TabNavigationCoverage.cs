@@ -21,6 +21,7 @@ internal sealed partial class UnifiedNativeCoverage
 {
     internal async Task TabRegressionsAsync(PopupLifecycleProbe probe, MauiNavigationHostFactory factory)
     {
+        await SharedTabStackAsync(factory);
         await TabStripSettingsAsync(factory);
         foreach (var stage in new[] { "before", "appearing" })
         {
@@ -42,6 +43,78 @@ internal sealed partial class UnifiedNativeCoverage
         await FlyoutInsideTabAsync(factory);
         Success(await factory.SetRoot<WelcomeViewModel>(host.Window), "tabs: release qualification root");
         probe.Opened.Clear(); probe.Created.Clear();
+    }
+
+    private async Task SharedTabStackAsync(MauiNavigationHostFactory factory)
+    {
+        Success(await factory.SetRoot<SharedTabsDemoViewModel>(host.Window), "shared tabs: root");
+        var root = Root; var container = root.Current!; var view = (SharedTabsDemoView)container.View;
+        var tabs = container.Children!; var first = (DocumentViewModel)tabs.Current!.ViewModel;
+        var shared = view.SharedContent; var toolbar = view.ToolbarCenterContent;
+        await Ready(tabs.View.TabSelector);
+        Check(view.TabItems.Count == 4 && view.TabItems.All(item => item.ViewModel != null), "shared tabs: eager roots include hidden and disabled destinations");
+        Success(await first.Navigation.NavigateTo<DemoDetailViewModel>(), "shared tabs: detail covers container");
+        var detail = (DemoDetailViewModel)root.Current!.ViewModel;
+        await Ready(root.Current.View);
+        Check(root.Current.Children == null && ReferenceEquals(root.View.Presenter.CurrentContent, root.Current.View), "shared tabs: only detail is presented above tabs");
+        Check(!tabs.IsActive && first.Dismissals == 0 && first.Resource.Disposals == 0, "shared tabs: covering retains tab lifetime");
+        var popupContent = new Label { Text = "Window-owned notification while the tabs are covered" };
+        var popup = new CommunityToolkit.Maui.Views.Popup<string> { Content = popupContent };
+        var opened = false; popup.Opened += (_, _) => opened = true;
+        var showing = factory.ShowPopupAsync(host.Window, popup);
+        await Until(() => opened || showing.IsCompleted);
+        if (showing.IsFaulted) await showing;
+        await Ready(popupContent);
+        Check(view.ModalDepth == 1, "window popup: covered container observes presentation");
+        var busy = false;
+        try { await factory.ShowPopupAsync(host.Window, new CommunityToolkit.Maui.Views.Popup()); }
+        catch (ModalPresentationBusyException) { busy = true; }
+        Check(busy, "window popup: overlap has a distinguishable rejection");
+        await popup.CloseAsync("done");
+        Check((await showing).Result == "done" && view.ModalDepth == 0,
+            "window popup: result and covered-container dismissal balance");
+        Success(await detail.Navigation.NavigateBack(), "shared tabs: return");
+        await Ready(tabs.View.TabSelector);
+        Check(ReferenceEquals(container, root.Current) && ReferenceEquals(first, tabs.Current!.ViewModel), "shared tabs: Back restores original root");
+        Check(ReferenceEquals(shared, view.SharedContent) && ReferenceEquals(toolbar, view.ToolbarCenterContent), "shared tabs: shared controls retain instances");
+        Success(await first.Navigation.Select("archive"), "shared tabs: select retained eager root");
+        Check(first.Dismissals == 1 && !first.IsDismissed && first.Resource.Disposals == 0, "shared tabs: selection callback retains ownership");
+        var rail = new Label { Text = "Rail", BackgroundColor = Colors.LightGray };
+        view.SharedContent = new Label { Text = "Full-width shared panel", HeightRequest = 40 };
+        view.LeadingContent = rail; view.LeadingContentWidth = new GridLength(48); view.IsTabBarVisible = false;
+        await Ready(rail); await Task.Delay(60);
+        Check(Math.Abs(rail.Width - 48) <= 2 && !tabs.View.TabSelector.IsVisible, "shared tabs: dock reserves a 48 DIP rail without a tab row");
+        var picker = new Label { Text = "Body picker", BackgroundColor = Colors.White };
+        view.BodyRowOverlayContent = picker; view.IsLeadingContentVisible = false;
+        await Ready(picker); await Task.Delay(60);
+        Check(picker.Width >= view.Width - 2, "shared tabs: body overlay spans rail and detail");
+        view.BodyRowOverlayContent = null; view.LeadingContent = null; view.IsTabBarVisible = true;
+        var customRow = new Grid { BackgroundColor = Colors.LightGray }; customRow.Add(new Label { Text = "Application tab row" });
+        view.TabBarContent = customRow; view.TabBarHeight = 32;
+        await Ready(customRow); await Task.Delay(60);
+        Check(Math.Abs(customRow.Height - 32) <= 2 && !tabs.View.TabSelector.IsVisible, "shared tabs: custom 32 DIP row replaces built-in selector");
+        view.TabBarContent = null; view.TabBarHeight = -1;
+        var retained = tabs.Current;
+        var sharedPanel = view.SharedContent!;
+        var headerHost = (View)view.HeaderContent!.Parent!;
+        view.BodyTemplate = new ControlTemplate(() => new Border
+        {
+            StrokeThickness = 0, Margin = new Thickness(8, 0, 8, 8),
+            StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 12 },
+            Content = new ContentPresenter()
+        });
+        view.DetailMargin = new Thickness(0, 0, 8, 8);
+        await Ready(sharedPanel); await Task.Delay(60);
+        Check(Math.Abs(sharedPanel.Width - (headerHost.Width - 16)) <= 2,
+            "shared tabs: body frame insets shared content while header remains outside");
+        Check(tabs.View.Presenter.Margin == new Thickness(0, 0, 8, 8), "shared tabs: detail inset leaves shared content in place");
+        await CaptureUiAsync("shared-tabs-body-frame");
+        view.BodyTemplate = null; view.DetailMargin = Thickness.Zero;
+        await Ready(sharedPanel); await Task.Delay(60);
+        Check(Math.Abs(sharedPanel.Width - headerHost.Width) <= 2 && ReferenceEquals(retained, tabs.Current),
+            "shared tabs: removing frame restores full width and retains the selected root");
+        Check(!root.View.IsBusyPresented, "shared tabs: no automatic navigation loader");
+        await CaptureUiAsync("shared-tabs-desktop-slots");
     }
 
     private async Task TabStripSettingsAsync(MauiNavigationHostFactory factory)

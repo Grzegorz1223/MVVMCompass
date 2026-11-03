@@ -25,11 +25,20 @@ public sealed class NavigationItemContext : ObservableObject
     private bool busy;
     private bool visible = true;
     private bool enabled = true;
+    private ViewModelBase? viewModel;
+    private VisualElement? view;
     internal NavigationItemContext(NavigationDestination destination, ICommand command) { Destination = destination; SelectCommand = command; visible = destination.Item?.IsVisible ?? true; enabled = destination.Item?.IsEnabled ?? true; }
     internal NavigationDestination Destination { get; set; }
     internal void RefreshMetadata() { OnPropertyChanged(nameof(Title)); OnPropertyChanged(nameof(SelectedIcon)); OnPropertyChanged(nameof(UnselectedIcon)); OnPropertyChanged(nameof(Icon)); }
     /// <summary>Gets the stable destination ID.</summary>
     public string Id => Destination.Id;
+    /// <summary>Gets the declared model type without constructing a destination.</summary>
+    public Type? ViewModelType => Destination.Item?.ViewModelType ?? ViewModel?.GetType();
+    /// <summary>Gets the owned root model if prepared. Do not dismiss it while it remains registered.</summary>
+    public ViewModelBase? ViewModel { get => viewModel; internal set => SetProperty(ref viewModel, value); }
+    /// <summary>Gets the retained root view, or null before preparation or after removal. The library owns its placement; do not reparent it.</summary>
+    public VisualElement? View { get => view; internal set => SetProperty(ref view, value); }
+    internal void Release() { View = null; ViewModel = null; IsBusy = false; }
     /// <summary>Gets the display title.</summary>
     public string Title => Destination.Title;
     /// <summary>Gets the optional image name.</summary>
@@ -95,6 +104,7 @@ internal sealed partial class NavigationContext : ObservableObject, INavigationI
     public Window Window => owner.Window;
     /// <summary>Gets the active screen, or null while preparing or after teardown.</summary>
     public NavigationScreenEntry? Current => active?.Stack.LastOrDefault();
+    internal NavigationScreenEntry? StackRoot => active?.Stack.FirstOrDefault();
     /// <summary>Gets the active destination ID.</summary>
     public string? SelectedDestinationId => active?.Definition.Id;
     /// <summary>Gets the selected top-level destination, including a containing tab group.</summary>
@@ -153,8 +163,13 @@ internal sealed partial class NavigationContext : ObservableObject, INavigationI
     async Task INavigationInitializable<NavigationDefinition>.InitializeAsync(NavigationDefinition definition, CancellationToken cancellationToken)
     {
         var target = Resolve(definition.InitialDestinationId ?? definition.Destinations[0].Id);
-        var screen = await PrepareAsync(target.Definition.Factory!, null, _ => { }, cancellationToken);
-        target.Stack.Add(screen);
+        if (definition.TabOptions.Initialization == TabInitialization.Eager)
+        {
+            foreach (var destination in destinations.Values)
+                destination.Stack.Add(await PrepareAsync(destination.Definition.Factory!, null, _ => { }, cancellationToken));
+        }
+        else target.Stack.Add(await PrepareAsync(target.Definition.Factory!, null, _ => { }, cancellationToken));
+        var screen = target.Stack[0];
         active = target;
         RememberSelection();
         View.Presenter.Install(screen.View);
@@ -165,7 +180,6 @@ internal sealed partial class NavigationContext : ObservableObject, INavigationI
     {
         covered = false;
         if (Current != null) await ActivateAsync(Current);
-        await NotifySelectionAsync();
         Publish();
     }
     async Task INavigationAware.DeactivateAsync()
@@ -205,7 +219,7 @@ internal sealed partial class NavigationContext : ObservableObject, INavigationI
         active!.Stack.Add(candidate);
         Publish();
         await View.Presenter.PresentAsync(candidate.View, false);
-        await ActivateAsync(candidate);
+        await ActivateAsync(candidate, ViewNavigationKind.Pushed);
         return candidate;
     }, cancellationToken);
 
@@ -272,15 +286,14 @@ internal sealed partial class NavigationContext : ObservableObject, INavigationI
             candidate = await PrepareAsync(target.Definition.Factory!, parameters, entry => operation.Own(entry), operation.CancellationToken);
         operation.BeginCommit();
         if (candidate == null && parameters != null) await target.Stack[^1].ViewModel.GetParameters(parameters);
-        await DeactivateAsync(previous);
+        await DeactivateAsync(previous, selectionChanged: target != active);
         if (candidate != null) target.Stack.Add(candidate);
         active = target;
         RememberSelection();
         SetFlyout(false);
         Publish();
         await View.Presenter.PresentAsync(Current!.View, false);
-        await ActivateAsync(Current);
-        await NotifySelectionAsync();
+        await ActivateAsync(Current, ViewNavigationKind.TabSelected);
         return Current;
     }, cancellationToken);
 
@@ -420,8 +433,15 @@ internal sealed partial class NavigationContext : ObservableObject, INavigationI
         ownedScreens.Add(result);
         void Changed(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
         {
-            if (args.PropertyName == nameof(ViewModelBase.IsBusy))
-                _ = owner.DispatchContentAsync(() => { if (!IsClosed) Publish(); });
+            if (args.PropertyName is nameof(ViewModelBase.IsBusy) or null or "" || result.ViewModel is IActivityIndicatorProvider)
+                _ = owner.DispatchContentAsync(() =>
+                {
+                    if (IsClosed) return;
+                    // Busy changes need no collection reconciliation or toolbar/layout refresh.
+                    foreach (var state in destinations.Values)
+                        if (state.Stack.FirstOrDefault() == result && items.TryGetValue(state.Definition.Id, out var item))
+                            item.IsBusy = result.ViewModel is IActivityIndicatorProvider activity ? activity.IsTabBusy : result.ViewModel.IsBusy;
+                });
         }
         result.ViewModel.PropertyChanged += Changed;
         result.ViewModel.RegisterSubscriptionCleanup(() => result.ViewModel.PropertyChanged -= Changed);
@@ -439,24 +459,55 @@ internal sealed partial class NavigationContext : ObservableObject, INavigationI
         }
     }
 
-    private static async Task ActivateAsync(NavigationScreenEntry screen)
+    private async Task ActivateAsync(NavigationScreenEntry screen, ViewNavigationKind? kind = null)
     {
         if (screen.Entry.State != NavigationEntryState.Active)
         {
             await screen.Entry.ActivateAsync();
             await screen.ViewModel.NavigatedTo();
             await screen.ViewModel.Appearing();
+            screen.View.QueueNavigation(kind ?? (ContainerScreen != null && active?.Stack.FirstOrDefault() == screen
+                ? ReferenceEquals(notifiedSelection, screen.ViewModel) && screen.View.HasBeenNavigationActive
+                    ? ViewNavigationKind.Returned : ViewNavigationKind.TabSelected : screen.View.HasBeenNavigationActive
+                    ? ViewNavigationKind.Returned : IsModal ? ViewNavigationKind.Pushed : ViewNavigationKind.RootInstalled), Window);
         }
         // A child's deactivation can fail before its parent becomes inactive.
         // Restore that child even when the parent's entry is already active.
         if (screen.Children != null) await ((INavigationAware)screen.Children).ActivateAsync(screen.Entry.Lifetime.Token);
+        // Every activation path completes notifications, including return and cleanup recovery.
+        // Update the parent's selection before delivering either its root or retained detail view.
+        if (ContainerScreen == null) screen.View.FlushNavigation();
+        else await NotifySelectionAsync();
     }
-    private async Task DeactivateAsync(NavigationScreenEntry screen)
+    private async Task DeactivateAsync(NavigationScreenEntry screen, bool selectionChanged = false)
     {
         if (screen.Entry.State != NavigationEntryState.Active || !deactivating.Add(screen.Entry)) return;
-        try { if (screen.Children != null) await ((INavigationAware)screen.Children).DeactivateAsync();
-            await screen.Entry.DeactivateAsync(); await screen.ViewModel.Deactivated(); }
-        finally { deactivating.Remove(screen.Entry); }
+        try
+        {
+            if (screen.Children is { UsesTabSwitchCompatibility: true } retained)
+            {
+                // The container owns covered-page notifications. Keep the selected child active
+                // so returning does not repeat activation or interrupt shared background work.
+                retained.covered = true;
+                foreach (var child in retained.ActiveChain()) child.Current?.View.SuspendNavigation();
+                retained.Publish();
+                await screen.Entry.DeactivateAsync();
+                if (selectionChanged && UsesTabSwitchCompatibility) await screen.ViewModel.AfterDismissed();
+                else await screen.ViewModel.Disappearing();
+            }
+            else
+            {
+                if (screen.Children != null) await ((INavigationAware)screen.Children).DeactivateAsync();
+                await screen.Entry.DeactivateAsync();
+                if (selectionChanged && UsesTabSwitchCompatibility) await screen.ViewModel.AfterDismissed();
+                else await screen.ViewModel.Deactivated();
+            }
+        }
+        finally
+        {
+            deactivating.Remove(screen.Entry);
+            screen.View.LeaveNavigation(selectionChanged ? ViewNavigationKind.TabDeselected : ViewNavigationKind.Covered, Window);
+        }
     }
     private async Task DismissAsync(IEnumerable<NavigationScreenEntry> screens, DismissalReason reason)
     {
@@ -486,7 +537,12 @@ internal sealed partial class NavigationContext : ObservableObject, INavigationI
         {
             item.IsSelected = item.Id == SelectedDestinationId || item.Id == SelectedMenuId;
             if (destinations.TryGetValue(item.Id, out var state) && state.Stack.Count != 0 && state.Stack[0].ViewModel.NavigationBinding != null)
-                item.IsBusy = state.Stack[0].ViewModel.IsBusy;
+            {
+                item.ViewModel = state.Stack[0].ViewModel;
+                item.View = state.Stack[0].View;
+                item.IsBusy = item.ViewModel is IActivityIndicatorProvider activity ? activity.IsTabBusy : item.ViewModel.IsBusy;
+            }
+            else item.Release();
         }
         var top = active == null ? null : TopLevel(active.Definition.Id);
         var visibleTabs = top?.Children.Count > 0 ? top.Children :
@@ -497,6 +553,8 @@ internal sealed partial class NavigationContext : ObservableObject, INavigationI
         OnPropertyChanged(nameof(CanGoBack)); OnPropertyChanged(nameof(LeadingAction)); OnPropertyChanged(nameof(IsActive)); OnPropertyChanged(nameof(IsClosed));
         View.Refresh();
         AvailabilityChanged();
+        // Root entry state becomes active after its activation callback returns.
+        Current?.View.RetryNavigationAttachment();
         ParentContext?.Publish();
     }
     private void AvailabilityChanged()

@@ -13,10 +13,6 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
 {
     private static readonly ConditionalWeakTable<object, NavigationLifetime> claims = new();
     private static readonly AsyncLocal<Execution?> execution = new();
-    private readonly IViewLocator locator;
-    private readonly NavigationOptions options;
-    private IServiceScopeFactory? scopeFactory;
-    private readonly LegacyNavigationService composition;
     private readonly NavigationCoordinator coordinator;
     private readonly CancellationTokenSource closing = new();
     private readonly CancellationToken closingToken;
@@ -24,15 +20,12 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
     private int closed;
     private bool installing;
     private CancellationTokenSource? activeCancellation;
+    internal Func<NavigationResult, View>? RootFailureContentFactory { get; set; }
 
-    internal MauiNavigationHost(Window window, IViewLocator locator, NavigationOptions options, IServiceScopeFactory? scopeFactory = null)
+    internal MauiNavigationHost(Window window)
     {
         Window = window;
         closingToken = closing.Token;
-        this.locator = locator;
-        this.options = options;
-        this.scopeFactory = scopeFactory;
-        composition = new(locator, options, window) { ResolveOwnedView = ResolveOwnedView, ComposeRetained = ComposeRetainedAsync };
         var dispatcher = window.Dispatcher ?? throw new InvalidOperationException("The window requires an owning MAUI dispatcher.");
         coordinator = new(callback => DispatchNavigationAsync(dispatcher, callback));
         coordinator.Settled += NotifyDeferredPopups;
@@ -70,126 +63,47 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
     /// <summary>Completes after window destruction or disposal has awaited owned roots, popups and abandoned preparation.</summary>
     public Task Completion => completion.Task;
 
-    internal void ValidateConfiguration(IViewLocator expectedLocator, NavigationOptions expectedOptions, IServiceScopeFactory? expectedScopeFactory)
+    private Func<RootPreparation, Action<NavigationEntry<NavigationContext>>, Task<Page>> ContentRootFactory(
+        Func<NavigationContext> createContext, Func<NavigationContext, Page> createPage) => (preparation, own) =>
     {
-        if (!ReferenceEquals(locator, expectedLocator) || !ReferenceEquals(options, expectedOptions)
-            || scopeFactory != null && expectedScopeFactory != null && !ReferenceEquals(scopeFactory, expectedScopeFactory))
-            throw new InvalidOperationException("This window already belongs to another navigation configuration.");
-        // The original constructor does not specify a scope provider. DI may supply it later.
-        scopeFactory ??= expectedScopeFactory;
-    }
+        var context = createContext();
+        var entry = Claim(context, () => coordinator.CreateEntry(context));
+        own(entry);
+        var page = createPage(context);
+        preparation.Track(page);
+        page.BindingContext = context;
+        ViewModelTree.AdoptChildren(page, entry.Lifetime);
+        return Task.FromResult(page);
+    };
 
-    /// <summary>Replaces a registered legacy root using dictionary parameters and its existing lifecycle.</summary>
-    public Task<NavigationOutcome<MauiNavigationRoot<TViewModel>>> ReplaceRootAsync<TViewModel>(
-        NavigationRequest<Dictionary<string, object>?> request, bool navigable = false,
-        CancellationToken cancellationToken = default) where TViewModel : ViewModelBase =>
-        ReplaceRegisteredAsync<TViewModel, Dictionary<string, object>?>(request,
-            async (entry, parameter, token) =>
-            {
-                if (parameter != null) await entry.ViewModel.GetParameters(parameter);
-                token.ThrowIfCancellationRequested();
-            }, navigable, cancellationToken);
-
-    /// <summary>Replaces a registered legacy root using typed initialization before BeforeFirstShown.</summary>
-    public Task<NavigationOutcome<MauiNavigationRoot<TViewModel>>> ReplaceRootAsync<TViewModel, TParameter>(
-        NavigationRequest<TParameter> request, bool navigable = false,
-        CancellationToken cancellationToken = default)
-        where TViewModel : ViewModelBase, INavigationInitializable<TParameter> =>
-        ReplaceRegisteredAsync<TViewModel, TParameter>(request,
-            (entry, parameter, token) => entry.InitializeAsync(parameter, token), navigable, cancellationToken);
-
-    /// <summary>
-    /// Replaces a root using an ordinary view model and page factories. The entry owns the model
-    /// before page construction and typed initialization; explicit cleanup releases owned resources.
-    /// </summary>
-    public Task<NavigationOutcome<MauiNavigationRoot<TViewModel>>> ReplaceRootAsync<TViewModel, TParameter>(
-        NavigationRequest<TParameter> request, Func<TViewModel> createViewModel, Func<TViewModel, Page> createPage,
-        bool navigable = false, Func<TViewModel, Task>? cleanup = null, CancellationToken cancellationToken = default)
-        where TViewModel : class, INavigationInitializable<TParameter>
-    {
-        return RunReplacementAsync(request, PlainFactory(createViewModel, createPage, cleanup),
-            (entry, parameter, token) => entry.InitializeAsync(parameter, token), navigable, cancellationToken);
-    }
-
-    private Task<NavigationOutcome<MauiNavigationRoot<TViewModel>>> ReplaceRegisteredAsync<TViewModel, TParameter>(
+    private async Task<NavigationOutcome<MauiNavigationRoot<NavigationContext>>> RunReplacementAsync<TParameter>(
         NavigationRequest<TParameter> request,
-        Func<NavigationEntry<TViewModel>, TParameter, CancellationToken, Task> initialize,
-        bool navigable, CancellationToken cancellationToken) where TViewModel : ViewModelBase =>
-        RunReplacementAsync(request, RegisteredFactory<TViewModel>(), RegisteredInitializer(initialize), navigable, cancellationToken);
-
-    private Func<RootPreparation, Action<NavigationEntry<TViewModel>>, Task<Page>> RegisteredFactory<TViewModel>()
-        where TViewModel : ViewModelBase => async (preparation, own) =>
-        {
-            var visual = await NavigationViewFactory.CreateAsync<TViewModel>(locator, preparation.CancellationToken);
-            preparation.Track(visual);
-            if (visual is not Page page || visual is not IHasVM { ViewModel: TViewModel model })
-                throw new InvalidOperationException("A registered destination must be a Page with the requested IHasVM view model.");
-            own(Claim(model, () => coordinator.AttachEntry(model, model.Lifetime)));
-            composition.WireRoot(page, model);
-            return page;
-        };
-
-    private static Func<NavigationEntry<TViewModel>, TParameter, CancellationToken, Task> RegisteredInitializer<TViewModel, TParameter>(
-        Func<NavigationEntry<TViewModel>, TParameter, CancellationToken, Task> initialize) where TViewModel : ViewModelBase =>
-        async (entry, parameter, token) =>
-        {
-            await initialize(entry, parameter, token);
-            token.ThrowIfCancellationRequested();
-            await entry.ViewModel.BeforeFirstShown();
-            token.ThrowIfCancellationRequested();
-        };
-
-    private Func<RootPreparation, Action<NavigationEntry<TViewModel>>, Task<Page>> PlainFactory<TViewModel>(
-        Func<TViewModel> createViewModel, Func<TViewModel, Page> createPage, Func<TViewModel, Task>? cleanup) where TViewModel : class
-    {
-        ArgumentNullException.ThrowIfNull(createViewModel);
-        ArgumentNullException.ThrowIfNull(createPage);
-        return (preparation, own) =>
-        {
-            var model = createViewModel() ?? throw new InvalidOperationException("The view model factory returned null.");
-            if (model is ViewModelBase)
-                throw new InvalidOperationException("Use registered overloads for ViewModelBase and its existing lifecycle.");
-            var entry = Claim(model, () => coordinator.CreateEntry(model, cleanup == null ? null : () => cleanup(model)));
-            own(entry);
-            var page = createPage(model) ?? throw new InvalidOperationException("The page factory returned null.");
-            if (page.Parent != null || ReferenceEquals(page, Window.Page))
-                throw new InvalidOperationException("Navigation factories must return detached pages.");
-            if (page.BindingContext != null && !ReferenceEquals(page.BindingContext, model))
-                throw new InvalidOperationException("The page must bind to the supplied view model.");
-            preparation.Track(page);
-            page.BindingContext = model;
-            ViewModelTree.AdoptChildren(page, entry.Lifetime);
-            return Task.FromResult(page);
-        };
-    }
-
-    private async Task<NavigationOutcome<MauiNavigationRoot<TViewModel>>> RunReplacementAsync<TViewModel, TParameter>(
-        NavigationRequest<TParameter> request,
-        Func<RootPreparation, Action<NavigationEntry<TViewModel>>, Task<Page>> create,
-        Func<NavigationEntry<TViewModel>, TParameter, CancellationToken, Task> initialize,
-        bool navigable, CancellationToken cancellationToken, RootTransitionMode? applicationMode = null, bool submitted = false,
-        Func<CancellationToken, Task>? prepare = null) where TViewModel : class
+        Func<RootPreparation, Action<NavigationEntry<NavigationContext>>, Task<Page>> create,
+        Func<NavigationEntry<NavigationContext>, TParameter, CancellationToken, Task> initialize,
+        CancellationToken cancellationToken, RootTransitionMode? applicationMode = null, bool submitted = false,
+        Func<CancellationToken, Task>? prepare = null)
     {
         if (IsClosed) return new(applicationMode == null ? NavigationStatus.Cancelled : NavigationStatus.InvalidOrigin, null, false);
         if (!submitted && IsContentCallback) return new(NavigationStatus.Reentrant, null, false);
-        var legacyReentrant = RootOperationGate.IsLegacyReentrant(Window);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, closingToken);
         return await (submitted ? coordinator.SubmitAsync(request, ExecuteAsync, linked.Token)
             : coordinator.RunAsync(request, ExecuteAsync, linked.Token));
 
-        async Task<MauiNavigationRoot<TViewModel>> ExecuteAsync(NavigationOperationContext<TParameter> context)
+        async Task<MauiNavigationRoot<NavigationContext>> ExecuteAsync(NavigationOperationContext<TParameter> context)
         {
             using var callbackScope = NavigationCallbackScope.Enter(this);
-            if (legacyReentrant) throw new InvalidOperationException("A legacy root callback cannot await another root on its window.");
             using var gate = await RootOperationGate.EnterAsync(Window, context.CancellationToken);
             if (IsClosed) context.Reject(NavigationStatus.InvalidOrigin);
             var oldRoot = Window.Page;
             var oldOwned = CurrentRoot;
             var application = Application.Current;
             var wasRegistered = application?.Windows.Contains(Window) == true;
-            using var preparation = new RootPreparation(MauiNavigationHostFactory.ExistingModels(Window), context.CancellationToken);
-            NavigationEntry<TViewModel>? entry = null;
-            MauiNavigationRoot<TViewModel>? candidate = null;
+            using var preparation = new RootPreparation(MauiNavigationHostFactory.ExistingModels(Window));
+            NavigationEntry<NavigationContext>? entry = null;
+            MauiNavigationRoot<NavigationContext>? candidate = null;
+            var candidateCleanupAttempted = false;
+            var cleanupErrors = new List<Exception>();
+            void RecordCleanup(Exception error) { cleanupErrors.Add(error); context.RecordCleanupError(error); }
             var stage = RootReplacementStage.Commitment;
             var parent = execution.Value;
             var frame = new Execution(this, parent) { Committed = () => context.HasCommitted };
@@ -204,20 +118,17 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
                 if (prepare != null) await prepare(context.CancellationToken);
                 context.CancellationToken.ThrowIfCancellationRequested();
                 var content = await create(preparation, owned => entry = context.Own(owned));
-                candidate = new(navigable ? new NavigationPage(content) : content, content, entry!);
+                candidate = new(content, content, entry!);
                 TrackRoot(candidate);
                 await initialize(entry!, context.Parameter, context.CancellationToken);
-                DiscoverRetained(ownedPages.Single(page => page.Entry == entry));
                 ValidateWindow(oldRoot, application, wasRegistered);
                 var outgoing = ViewModelTree.Collect(oldRoot, true);
                 preparation.Validate(outgoing);
                 context.BeginCommit();
                 await DismissTreeAsync(oldRoot, oldOwned?.Entry, outgoing, DismissalReason.RootReplaced,
-                    applicationMode == null ? null : context.RecordCleanupError, dismissModals: applicationMode != null);
+                    RecordCleanup, dismissModals: applicationMode != null);
                 ValidateWindow(oldRoot, application, wasRegistered);
-                preparation.FinishPreparation();
-                NativeNavigationObserver.AttachApplication();
-                if (candidate.Page is NavigationPage navigation) NativeNavigationObserver.Attach(navigation);
+                NativeModalObserver.AttachApplication();
                 installing = true;
                 try { Window.Page = candidate.Page; }
                 finally { installing = false; }
@@ -225,13 +136,9 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
                     throw new InvalidOperationException("The replacement was changed during installation.");
                 CurrentRoot = candidate;
                 TrackRoot(candidate);
-                composition.SetCurrentRoot(content);
                 stage = RootReplacementStage.Activation;
                 await entry!.ActivateAsync();
-                await preparation.ActivateAsync();
-                DiscoverRetained(ownedPages.Single(page => page.Entry == entry));
                 await ActivateVisibleEntriesAsync();
-                BindRetainedContainers();
                 ObserveNativeTree();
                 if (IsClosed || !ReferenceEquals(Window.Page, candidate.Page) || entry.Lifetime.IsDismissed)
                     throw new InvalidOperationException("The root was removed during activation.");
@@ -246,18 +153,27 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
                 {
                     CurrentRoot = candidate;
                     TrackRoot(candidate!);
-                    composition.SetCurrentRoot(candidate!.Content);
                 }
-                if (context.HasCommitted) throw new RootReplacementException(stage, installed, error);
+                if (context.HasCommitted)
+                {
+                    var failure = new RootReplacementException(stage, installed, error);
+                    if (RootFailureContentFactory != null && !IsClosed && (installed || ReferenceEquals(Window.Page, oldRoot)))
+                    {
+                        candidateCleanupAttempted = true;
+                        await RecoverCommittedRootAsync(Window.Page!, candidate, entry, preparation.OwnedModels,
+                            failure, cleanupErrors, RecordCleanup);
+                    }
+                    throw failure;
+                }
                 throw;
             }
             finally
             {
                 try
                 {
-                    if (candidate == null || !ReferenceEquals(Window.Page, candidate.Page))
+                    if (!candidateCleanupAttempted && (candidate == null || !ReferenceEquals(Window.Page, candidate.Page)))
                         await DismissTreeAsync(candidate?.Page, entry, preparation.OwnedModels, DismissalReason.PreparationFailed,
-                            applicationMode == null ? null : context.RecordCleanupError);
+                            RecordCleanup);
                 }
                 finally
                 {
@@ -306,17 +222,14 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
         IEnumerable<ViewModelBase> models, DismissalReason reason, Action<Exception>? recordError = null, bool dismissModals = false)
     {
         var tracked = OwnedWithin(page, entry);
-        var retained = RetainedWithin(page, tracked);
-        var owned = models.Concat(retained.Select(item => item.Entry?.ViewModel).OfType<ViewModelBase>())
-            .Where(model => CanCleanLegacy(model, entry)).Distinct<ViewModelBase>(ReferenceEqualityComparer.Instance).ToArray();
+        var owned = models.Where(model => CanCleanModel(model, entry))
+            .Concat(tracked.SelectMany(page => OwnedModels(page).Where(model => CanCleanModel(model, page.Entry))))
+            .Concat(page == null ? [] : PopupOwnership.ModelsFor(page))
+            .Distinct<ViewModelBase>(ReferenceEqualityComparer.Instance).ToArray();
         MarkOwnedPages(tracked, reason);
         if (reason == DismissalReason.RootReplaced)
             foreach (var model in owned) model.MarkHostReplaced();
-        var attachedModels = tracked.SelectMany(item => ViewModelTree.Collect(item.Content)).ToHashSet();
-        var lifetimes = owned.Where(model => !attachedModels.Contains(model)).Select(model => model.Lifetime).Concat(tracked.SelectMany(pageOwner => retained.Where(item => item.Owner == pageOwner && item.Entry != null).Select(item => item.Entry!.Lifetime)
-                .Concat(ViewModelTree.Collect(pageOwner.Content).Where(model => CanCleanLegacy(model, entry)).Select(model => model.Lifetime)).Append(pageOwner.Entry.Lifetime)))
-            .Concat(retained.Where(item => item.Entry != null).Select(item => item.Entry!.Lifetime))
-            .Concat(owned.Select(model => model.Lifetime))
+        var lifetimes = owned.Select(model => model.Lifetime).Concat(tracked.Select(item => item.Entry.Lifetime))
             .Concat(entry == null ? [] : new[] { entry.Lifetime }).Distinct().ToArray();
         foreach (var lifetime in lifetimes) lifetime.MarkDismissed(reason);
         SignalLifetimes(lifetimes);
@@ -348,10 +261,7 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
         catch (Exception error) { recordError?.Invoke(error); NavigationDiagnostics.Report(error, $"Window root cleanup ({reason})"); }
         finally
         {
-            composition.UnwireScopedSubscriptions(owned.Concat(tracked.SelectMany(item => ViewModelTree.Collect(item.Content))));
-            ForgetRetained(retained);
             ForgetPages(tracked);
-            if (page is NavigationPage navigation) NativeNavigationObserver.Detach(navigation);
         }
         foreach (var error in lifetimes.SelectMany(lifetime => lifetime.CancellationErrors))
         { recordError?.Invoke(error); NavigationDiagnostics.Report(error, "Window root cancellation"); }
@@ -370,7 +280,8 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
                 return;
             }
             // Native/external replacement is already irreversible. End origin validity immediately.
-            var outgoing = ViewModelTree.Collect(previous.Page, true);
+            var outgoing = ViewModelTree.Collect(previous.Page, true).Where(model => CanCleanModel(model, previous.Entry))
+                .Concat(PopupOwnership.ModelsFor(previous.Page)).Distinct().ToArray();
             foreach (var model in outgoing)
             {
                 model.MarkHostReplaced();
@@ -389,7 +300,6 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
                 if (ReferenceEquals(CurrentRoot, previous))
                 {
                     CurrentRoot = null;
-                    composition.SetCurrentRoot(null);
                 }
             }, required: false);
         }
@@ -417,8 +327,6 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
     /// <summary>Ends this host and awaits cleanup. Call outside navigation lifecycle callbacks.</summary>
     public ValueTask DisposeAsync()
     {
-        if (RootOperationGate.IsLegacyReentrant(Window))
-            return ValueTask.FromException(new InvalidOperationException("Dispose the host outside legacy root callbacks."));
         if (InHostCallback())
             return ValueTask.FromException(new InvalidOperationException("Dispose the host outside its navigation callbacks."));
         return new(CloseAsync(DismissalReason.Removed));
@@ -462,8 +370,6 @@ internal sealed partial class MauiNavigationHost : IAsyncDisposable
                     catch (Exception error) { NavigationDiagnostics.Report(error, $"Window popup cleanup ({reason})"); }
                     CurrentRoot = null;
                     PruneNativeSubscriptions([]);
-                    lock (nativeScheduleGate) nativeCallbacks.Clear();
-                    composition.SetCurrentRoot(null);
                 });
                 completion.TrySetResult();
             }

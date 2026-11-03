@@ -8,7 +8,7 @@ internal sealed partial class NavigationContext
     public Task<NavigationOutcome<NavigationScreenEntry?>> SelectDefaultAsync(NavigationRequestOptions? options = null,
         CancellationToken cancellationToken = default) => SelectAsync(DefaultDestinationId, options: options, cancellationToken: cancellationToken);
 
-    /// <summary>Dismisses a destination's entire history. An active destination receives a fresh root; an inactive one recreates its root on selection.</summary>
+    /// <summary>Dismisses a destination's entire history. Active and eagerly initialized destinations receive a fresh root; lazy inactive destinations recreate it on selection.</summary>
     public Task<NavigationOutcome<NavigationScreenEntry?>> ResetDestinationAsync(string destinationId,
         NavigationRequestOptions? options = null, CancellationToken cancellationToken = default) => RunAsync(options, async operation =>
     {
@@ -16,18 +16,18 @@ internal sealed partial class NavigationContext
         var removed = target.Stack.AsEnumerable().Reverse().ToArray();
         if (removed.Length == 0) return Current;
         await GuardAsync(removed.SelectMany(EndingBranch), operation);
-        var candidate = target == active
+        var candidate = target == active || Definition.TabOptions.Initialization == TabInitialization.Eager
             ? await PrepareAsync(target.Definition.Factory!, null, entry => operation.Own(entry), operation.CancellationToken) : null;
         operation.BeginCommit();
         target.Stack.Clear();
         if (candidate != null) target.Stack.Add(candidate);
         foreach (var screen in removed) screen.Entry.Lifetime.MarkDismissed(DismissalReason.Removed);
         Publish();
-        try { if (candidate != null) await View.Presenter.PresentAsync(candidate.View, true); }
+        try { if (candidate != null && target == active) await View.Presenter.PresentAsync(candidate.View, true); }
         finally
         {
             try { await DismissAsync(removed, DismissalReason.Removed); }
-            finally { if (candidate != null) await ActivateAsync(candidate); }
+            finally { if (candidate != null && target == active) await ActivateAsync(candidate); }
         }
         return Current;
     }, cancellationToken);
@@ -72,10 +72,10 @@ internal sealed partial class NavigationContext
         operation.BeginCommit();
         if (candidate != null) target.Stack.Add(candidate);
         active = target;
-        foreach (var id in removingIds) { destinations.Remove(id); items.Remove(id); selectedChildren.Remove(id); }
+        foreach (var id in removingIds) { destinations.Remove(id); if (items.Remove(id, out var removedItem)) removedItem.Release(); selectedChildren.Remove(id); }
         foreach (var top in Definition.Destinations.Where(top => top.Children.Count != 0))
         {
-            if (!top.Children.Any(child => items.ContainsKey(child.Id))) items.Remove(top.Id);
+            if (!top.Children.Any(child => items.ContainsKey(child.Id)) && items.Remove(top.Id, out var removedGroup)) removedGroup.Release();
             if (selectedChildren.TryGetValue(top.Id, out var childId) && !items.ContainsKey(childId)) selectedChildren.Remove(top.Id);
         }
         foreach (var entry in menu.Where(entry => !items.ContainsKey(entry.Id)).ToArray()) menu.Remove(entry);

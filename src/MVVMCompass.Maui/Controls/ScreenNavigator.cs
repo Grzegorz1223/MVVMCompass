@@ -45,22 +45,45 @@ internal sealed class ScreenNavigator
         Context.CloseModalAsync(Options, cancellationToken);
     /// <summary>Shows a confirmation on this screen's owning handled page.</summary>
     public Task<bool> DisplayAlertAsync(string title, string message, string accept, string cancel) =>
-        Context.Window.Dispatcher.DispatchAsync(() =>
+        Context.Window.Dispatcher.DispatchAsync(async () =>
         {
             ValidateDialogOrigin();
-            return Context.HandledPage.DisplayAlertAsync(title, message, accept, cancel);
+            using var observation = Services.ModalPresentationScope.Begin(Screen.ViewModel, Context.Window, ModalPresentationKind.Alert);
+            return await Context.HandledPage.DisplayAlertAsync(title, message, accept, cancel);
         });
 
     internal Task DisplayAlertAsync(string title, string message, string cancel) =>
-        Context.Window.Dispatcher.DispatchAsync(() =>
+        Context.Window.Dispatcher.DispatchAsync(async () =>
         {
             ValidateDialogOrigin();
-            return Context.HandledPage.DisplayAlertAsync(title, message, cancel);
+            using var observation = Services.ModalPresentationScope.Begin(Screen.ViewModel, Context.Window, ModalPresentationKind.Alert);
+            await Context.HandledPage.DisplayAlertAsync(title, message, cancel);
         });
+
+    internal Task<CommunityToolkit.Maui.Core.IPopupResult<TResult>> ShowPopupAsync<TResult>(View popup,
+        CommunityToolkit.Maui.IPopupOptions? options, CancellationToken token)
+    {
+        // Native dispatchers need not preserve the navigation callback's ExecutionContext.
+        if (Context.Host.IsContentCallback)
+            return Task.FromException<CommunityToolkit.Maui.Core.IPopupResult<TResult>>(
+                new InvalidOperationException("Present popups outside navigation callbacks, or use RequestPopup for a registered popup."));
+        return Context.Window.Dispatcher.DispatchAsync<CommunityToolkit.Maui.Core.IPopupResult<TResult>>(async () =>
+        {
+            ValidateDialogOrigin();
+            if (Context.Host.IsContentCallback)
+                throw new InvalidOperationException("Present popups outside navigation callbacks, or use RequestPopup for a registered popup.");
+            return await Context.Host.PresentPopupAsync<TResult>(Screen.ViewModel,
+                _ => Task.FromResult(popup),
+                () => Context.IsActive && Context.RootContext.ContainsActiveOrigin(Screen.Entry) && Screen.View.IsAttachedTo(Context.Window),
+                token, options);
+        });
+    }
 
     private void ValidateDialogOrigin()
     {
         if (!Context.IsActive || !Context.RootContext.ContainsActiveOrigin(Screen.Entry))
             throw new InvalidOperationException("A hidden or dismissed screen cannot present a dialog.");
+        if (!Screen.View.IsAttachedTo(Context.Window))
+            throw new InvalidOperationException("Modal presentation requires the origin view and its own window to have native handlers.");
     }
 }

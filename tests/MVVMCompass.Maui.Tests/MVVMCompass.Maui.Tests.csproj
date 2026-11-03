@@ -2,4 +2,8 @@
   <ItemGroup>
     <ProjectReference Include="../../src/MVVMCompass.Maui/MVVMCompass.Maui.csproj" />
   </ItemGroup>
+  <ItemGroup Condition="'$(ConsumerMauiVersion)' != ''">
+    <PackageReference Include="Microsoft.Maui.Controls" Version="$(ConsumerMauiVersion)" />
+    <PackageReference Include="CommunityToolkit.Maui" Version="$(ConsumerToolkitVersion)" />
+  </ItemGroup>
 </Project>

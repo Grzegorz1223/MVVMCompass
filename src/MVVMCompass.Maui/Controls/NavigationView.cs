@@ -23,6 +23,8 @@ internal sealed partial class NavigationView : ContentView
     private readonly ContentView footer = new();
     private readonly ContentView overlay = new() { InputTransparent = true };
     private readonly ContentView bodyOverlay = new() { InputTransparent = true };
+    private readonly Grid bodyLayers;
+    private readonly Grid detail;
     private readonly Brush defaultLoadingBackdrop = new SolidColorBrush(Color.FromArgb("#33FFFFFF"));
     private readonly Grid busy = new() { InputTransparent = true };
     private NavigationContext? context;
@@ -36,8 +38,8 @@ internal sealed partial class NavigationView : ContentView
         TabSelector = new NavigationSelector();
         RailSelector = new NavigationSelector { Orientation = StackOrientation.Vertical };
         chrome.Add(Toolbar, 0, 0); chrome.Add(header, 0, 1);
-        var bodyLayers = new Grid(); bodyLayers.Add(Presenter); bodyLayers.Add(bodyOverlay);
-        var detail = new Grid { RowDefinitions = [new(GridLength.Auto), new(GridLength.Star), new(GridLength.Auto)] };
+        bodyLayers = new Grid(); bodyLayers.Add(Presenter); bodyLayers.Add(bodyOverlay);
+        detail = new Grid { RowDefinitions = [new(GridLength.Auto), new(GridLength.Star), new(GridLength.Auto)] };
         detail.Add(sharedTop, 0, 0); detail.Add(bodyLayers, 0, 1); detail.Add(sharedBottom, 0, 2);
         body.Add(detail, 1, 1); body.Add(TabSelector, 1, 0); body.Add(RailSelector, 0, 1);
         chrome.Add(body, 0, 2); chrome.Add(footer, 0, 3);
@@ -192,10 +194,12 @@ internal sealed partial class NavigationView : ContentView
         overlay.InputTransparent = OverlayContent == null;
         bodyOverlay.Content = BodyOverlayContent; bodyOverlay.IsVisible = BodyOverlayContent != null;
         bodyOverlay.InputTransparent = BodyOverlayContent == null;
+        RefreshBodyLayout();
         RefreshBusy();
         var position = context?.Definition.Presentation == NavigationPresentation.Rail ? TabBarPosition.Left : TabBarPosition;
         var rail = position is TabBarPosition.Left or TabBarPosition.Right;
-        var hasTabs = context?.TabItems.Count > 0;
+        var hasTabs = context?.TabItems.Count > 0 && IsTabBarVisible;
+        RefreshTabLayout(position, hasTabs);
         // Empty Auto tracks on both axes defer selector measurement until after the
         // star-sized body. Give unused edges zero size so chrome reserves its space first.
         body.RowDefinitions[0].Height = hasTabs && position == TabBarPosition.Top ? GridLength.Auto : new GridLength(0);
@@ -209,8 +213,10 @@ internal sealed partial class NavigationView : ContentView
         var unused = rail ? TabSelector : RailSelector;
         unused.CenterContent = null; unused.TrailingContent = null;
         unused.ItemsSource = null; unused.IsVisible = false;
-        selected.ItemsSource = context?.TabItems;
-        selected.IsVisible = hasTabs;
+        selected.ItemsSource = TabBarContent == null ? context?.TabItems : null;
+        selected.IsVisible = hasTabs && TabBarContent == null;
+        selected.IsSelectionEnabled = IsTabBarEnabled;
+        selected.HeightRequest = rail ? -1 : TabBarHeight;
         selected.ItemSizing = TabItemSizing;
         selected.Padding = TabBarPadding;
         selected.ItemSpacing = TabItemSpacing;
@@ -318,6 +324,7 @@ internal sealed partial class NavigationView : ContentView
         flyoutOverlay.Clear(); presentedFlyout = null; previousFocus = null;
         disconnected = true;
         ClearBusy();
+        ClearLayoutContent();
         if (swipe != null) { swipe.Swiped -= BackSwiped; Presenter.GestureRecognizers.Remove(swipe); swipe = null; }
         Toolbar.Disconnect(); TabSelector.Disconnect(); RailSelector.Disconnect(); menu.Disconnect();
         sharedTop.Content = null; sharedBottom.Content = null; menuHeader.Content = null; menuFooter.Content = null;

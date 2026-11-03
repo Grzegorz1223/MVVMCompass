@@ -24,12 +24,16 @@ public sealed partial class UnifiedNavigationTests : IAsyncDisposable
         builder.Services.AddSingleton<RootActions>();
         builder.Services.AddSingleton<PopupActions>();
         builder.Services.AddSingleton<PopupLifecycleActions>();
+        builder.Services.AddSingleton<TabProfileState>();
         builder.UseMVVMCompass(pairs =>
         {
             pairs.Add<Tabs, TabsView>(); pairs.Add<Flyout, FlyoutView>(); pairs.Add<Leaf, LeafView>();
             pairs.Add<PopupModel, PopupView>(); pairs.Add<Detail, DetailView>(); pairs.Add<Modal, ModalView>(); pairs.Add<Failing, FailingView>();
             pairs.Add<ApplicationRoot, ApplicationRootView>();
             pairs.Add<LifecyclePopupModel, LifecyclePopupView>();
+            pairs.Add<ProfileTabs, ProfileTabsView>(); pairs.Add<ProfileLeaf, ProfileLeafView>();
+            pairs.Add<ProfileFlyout, ProfileFlyoutView>();
+            pairs.Add<ProfileNestedTabs, ProfileNestedTabsView>();
         });
         services = builder.Services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
         foreach (var initializer in services.GetServices<IMauiInitializeService>()) initializer.Initialize(services);
@@ -350,7 +354,7 @@ public sealed partial class UnifiedNavigationTests : IAsyncDisposable
     {
         application.Next = () => factory.CreateWindow<T>();
         var window = ((IApplication)application).CreateWindow(null) as Window ?? throw new InvalidOperationException();
-        var host = factory.ForWindow(window); hosts.Add(host);
+        var host = MauiNavigationHostFactory.GetOrCreateHost(window); hosts.Add(host);
         Success(await factory.WaitForInitializationAsync(window, Token).WaitAsync(TimeSpan.FromSeconds(10), Token));
         var context = host.CurrentContentNavigation!;
         foreach (var item in context.ActiveChain()) item.View.Presenter.AnimateNavigation = false;
@@ -408,7 +412,7 @@ public sealed partial class UnifiedNavigationTests : IAsyncDisposable
     {
         internal static TaskCompletionSource<PopupView> OpenedSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public PopupView(PopupModel model, PopupActions actions) : base(model)
-        { Opened += (_, _) => { OpenedSignal.TrySetResult(this); actions.Opened?.Invoke(this); }; }
+        { actions.Created?.Invoke(this); Opened += (_, _) => { OpenedSignal.TrySetResult(this); actions.Opened?.Invoke(this); }; }
     }
     public sealed class Detail(INavigationService navigation, Resource resource) : Leaf(navigation, resource);
     public sealed class Modal : Leaf

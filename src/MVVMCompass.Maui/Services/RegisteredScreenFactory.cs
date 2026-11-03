@@ -15,11 +15,13 @@ internal sealed class RegisteredScreenFactory(NavigationRegistrationBuilder regi
     internal NavigationDefinition Definition(Type model, Dictionary<string, object>? parameters = null) =>
         new([new(model.FullName!, model.Name, For(model, parameters))]);
 
-    internal NavigationDefinition Definition(IEnumerable<NavigationItem> items, NavigationPresentation kind)
+    internal NavigationDefinition Definition(IEnumerable<NavigationItem> items, NavigationPresentation kind,
+        TabNavigationOptions? tabOptions = null)
     {
         var entries = items.ToArray();
         return new(entries.Select(item => new NavigationDestination(item.Id, item.Title, For(item.ViewModelType, item.Parameters), item.UnselectedIcon)
-        { Item = item }), kind, entries.FirstOrDefault(item => item.IsInitiallySelected)?.Id ?? entries.First(item => item.IsEnabled).Id);
+        { Item = item }), kind, entries.FirstOrDefault(item => item.IsInitiallySelected)?.Id ?? entries.First(item => item.IsEnabled).Id)
+        { TabOptions = kind == NavigationPresentation.Tabs ? tabOptions ?? TabNavigationOptions.Default : TabNavigationOptions.Default };
     }
 
     internal async Task<View> PreparePopupAsync<TViewModel, TResult>(NavigationContext owner, Dictionary<string, object>? parameters,
@@ -32,7 +34,8 @@ internal sealed class RegisteredScreenFactory(NavigationRegistrationBuilder regi
         try
         {
             using (scope.Construct(typeof(TViewModel))) model = destination.Model(scope.Services);
-            if (model.IsDismissed || NavigationEntryScope.IsOwned(model) || MauiNavigationHost.IsClaimedModel(model))
+            if (model.IsDismissed || model.Ownership.Parent != null || NavigationEntryScope.IsOwned(model)
+                || MauiNavigationHost.IsClaimedModel(model) || PopupOwnership.IsOwnedModel(model))
                 throw new InvalidOperationException("Popup models must be fresh and unowned.");
             scope.Own(model.Lifetime); bound = true;
             var view = destination.View(scope.Services) as CommunityToolkit.Maui.Views.Popup<TResult>
@@ -99,7 +102,7 @@ internal sealed class RegisteredScreenFactory(NavigationRegistrationBuilder regi
                 {
                     if (model.CompositionKind != container.Kind)
                         throw new InvalidOperationException("The container model must call SetTabs or SetFlyoutItems during BeforeFirstShown.");
-                    var definition = registry.Definition(model.CompositionItems, container.Kind);
+                    var definition = registry.Definition(model.CompositionItems, container.Kind, model.CompositionOptions);
                     var child = owner.CreateChild(screen, definition);
                     screen.Children = child;
                     container.Attach(child);

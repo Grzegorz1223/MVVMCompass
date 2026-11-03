@@ -11,27 +11,24 @@ public static class NavigationMauiAppBuilderExtensions
 {
     /// <summary>Registers view/model pairs and navigation services before application initialization. The typed delegate defaults to retained deactivation.</summary>
     public static MauiAppBuilder UseMVVMCompass(this MauiAppBuilder builder,
-        Action<NavigationRegistrationBuilder> configureDelegate) =>
-        UseMVVMCompass(builder, configureDelegate, new NavigationOptions());
-
-    /// <summary>Registers navigation with an explicit retained-view lifecycle policy.</summary>
-    internal static MauiAppBuilder UseMVVMCompass(this MauiAppBuilder builder,
-        Action<NavigationRegistrationBuilder> configureDelegate, NavigationOptions options)
+        Action<NavigationRegistrationBuilder> configureDelegate)
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(configureDelegate);
-        ArgumentNullException.ThrowIfNull(options);
         if (builder.Services.Any(service => service.ServiceType == typeof(NavigationRegistrationBuilder)))
             throw new InvalidOperationException("Navigation is already registered on this builder. Use AddViewModelViewPair for additional modules.");
 
         var registration = new NavigationRegistrationBuilder(builder.Services);
         configureDelegate(registration);
         builder.Services.AddSingleton(registration);
-        builder.Services.AddSingleton(options);
-        builder.Services.TryAddSingleton<IViewLocator, ViewLocator>();
-        builder.Services.TryAddSingleton<ILegacyNavigationService, LegacyNavigationService>();
         builder.Services.TryAddSingleton<MauiNavigationHostFactory>();
-        builder.Services.TryAddScoped<INavigationService, NavigationService>();
+        builder.Services.TryAddScoped<NavigationEntryServices>();
+        builder.Services.TryAddScoped<INavigationService>(provider =>
+        {
+            if (!provider.GetRequiredService<NavigationEntryServices>().IsEntry)
+                throw new InvalidOperationException("INavigationService must be resolved inside a registered navigation entry. Inject it into the destination, pass the owning entry's navigator to helpers, or use MauiNavigationHostFactory.SetRoot/RequestRoot with an explicit Window.");
+            return new NavigationService(provider.GetRequiredService<RegisteredScreenFactory>(), provider.GetRequiredService<MauiNavigationHostFactory>());
+        });
         builder.Services.TryAddSingleton<RegisteredScreenFactory>();
         builder.Services.TryAddEnumerable(ServiceDescriptor.Transient<IMauiInitializeService, NavigationInitializer>());
         return builder;
@@ -48,6 +45,19 @@ public static class NavigationMauiAppBuilderExtensions
             service.ServiceType == typeof(NavigationRegistrationBuilder))?.ImplementationInstance as NavigationRegistrationBuilder
             ?? throw new InvalidOperationException("Call UseMVVMCompass on this builder first.");
         registration.Add<TViewModel, TView>();
+        return builder;
+    }
+
+    /// <summary>Adds a runtime model/view pair before initialization. Type sources must preserve public constructors when trimming.</summary>
+    public static MauiAppBuilder AddViewModelViewPair(this MauiAppBuilder builder,
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type viewModel,
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type view)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        var registration = builder.Services.FirstOrDefault(service =>
+            service.ServiceType == typeof(NavigationRegistrationBuilder))?.ImplementationInstance as NavigationRegistrationBuilder
+            ?? throw new InvalidOperationException("Call UseMVVMCompass on this builder first.");
+        registration.Add(viewModel, view);
         return builder;
     }
 }
@@ -69,13 +79,19 @@ public sealed class NavigationRegistrationBuilder : IReadOnlyDictionary<Type, Ty
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TViewModel,
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TView>()
         where TViewModel : ViewModelBase where TView : VisualElement
+        => Add(typeof(TViewModel), typeof(TView));
+
+    /// <summary>Adds a concrete scoped model and transient view. Runtime type sources must preserve public constructors when trimming.</summary>
+    public void Add(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type viewModel,
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type view)
     {
         CheckMutable();
-        Validate(typeof(TViewModel), typeof(TView));
-        pairs.Add(typeof(TViewModel), typeof(TView));
-        services.TryAddScoped<TViewModel>();
-        activators.Add(typeof(TViewModel), new(provider => provider.GetRequiredService<TViewModel>(), provider => provider.GetRequiredService<TView>()));
-        services.TryAddTransient<TView>();
+        Validate(viewModel, view);
+        pairs.Add(viewModel, view);
+        services.TryAddScoped(viewModel);
+        activators.Add(viewModel, new(provider => (ViewModelBase)provider.GetRequiredService(viewModel), provider => (VisualElement)provider.GetRequiredService(view)));
+        services.TryAddTransient(view);
     }
 
     /// <summary>Gets the registered view type for a model type.</summary>
@@ -138,5 +154,11 @@ public sealed class NavigationRegistrationBuilder : IReadOnlyDictionary<Type, Ty
 internal sealed class NavigationInitializer(NavigationRegistrationBuilder registration) : IMauiInitializeService
 {
     public void Initialize(IServiceProvider serviceProvider) =>
-        serviceProvider.GetRequiredService<ILegacyNavigationService>().Initialize(registration.Freeze());
+        InitializeRegistration();
+
+    private void InitializeRegistration()
+    {
+        registration.Freeze();
+        NativeModalObserver.AttachApplication();
+    }
 }

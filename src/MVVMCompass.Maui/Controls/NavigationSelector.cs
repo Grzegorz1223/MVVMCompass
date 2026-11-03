@@ -21,6 +21,11 @@ public sealed class NavigationSelector : ContentView
     }
     /// <summary>Identifies the destination metadata supplied by navigation.</summary>
     public static readonly BindableProperty ItemsSourceProperty = BindableProperty.Create(nameof(ItemsSource), typeof(IEnumerable<NavigationItemContext>), typeof(NavigationSelector), propertyChanged: Changed);
+    /// <summary>Identifies selection input availability independently of trailing controls.</summary>
+    public static readonly BindableProperty IsSelectionEnabledProperty = BindableProperty.Create(nameof(IsSelectionEnabled), typeof(bool), typeof(NavigationSelector), true,
+        propertyChanged: (bindable, _, value) => { foreach (var cell in ((NavigationSelector)bindable).cells.Values) cell.IsEnabled = (bool)value; });
+    /// <summary>Gets or sets whether destination input is available. Other selector content remains enabled.</summary>
+    public bool IsSelectionEnabled { get => (bool)GetValue(IsSelectionEnabledProperty); set => SetValue(IsSelectionEnabledProperty, value); }
     /// <summary>Identifies the common item template.</summary>
     public static readonly BindableProperty ItemTemplateProperty = BindableProperty.Create(nameof(ItemTemplate), typeof(DataTemplate), typeof(NavigationSelector), propertyChanged: Changed);
     /// <summary>Identifies the selected item template.</summary>
@@ -92,7 +97,7 @@ public sealed class NavigationSelector : ContentView
         foreach (var item in source)
             if (!cells.ContainsKey(item))
             {
-                cells.Add(item, new DestinationCell(item));
+                cells.Add(item, new DestinationCell(item) { IsEnabled = IsSelectionEnabled });
                 item.PropertyChanged += ItemChanged;
             }
         var horizontal = Orientation == StackOrientation.Horizontal;

@@ -26,7 +26,7 @@ public sealed class TerminalViewCleanupTests
             observed = await first.Action();
         };
 
-        var pending = LegacyNavigationService.DismissViewModelsAsync([first, last], reason);
+        var pending = ViewModelCleanup.DismissAsync([first, last], reason);
         try
         {
             await entered.Task.WaitAsync(TestContext.Current.CancellationToken);
@@ -66,7 +66,7 @@ public sealed class TerminalViewCleanupTests
         object? observed = null;
         later.Cleanup = async () => observed = await failing.Action();
 
-        await LegacyNavigationService.DismissAllAsync([failing, later]);
+        await ViewModelCleanup.DismissAsync([failing, later], DismissalReason.RootReplaced);
 
         Assert.Equal("closed", observed);
         Assert.Null(await failing.Action());
@@ -84,7 +84,7 @@ public sealed class TerminalViewCleanupTests
         var staleCalls = 0;
         messenger.Register<SessionEndingMessage>(stale, (_, message) => { staleCalls++; message.Reply(true); });
 
-        await LegacyNavigationService.DismissViewModelsAsync([stale, stale], reason);
+        await ViewModelCleanup.DismissAsync([stale, stale], reason);
         if (fail) await Assert.ThrowsAsync<InvalidOperationException>(stale.DismissAsync);
         else await stale.DismissAsync();
         Assert.True(stale.IsPermanentlyDismissed);
@@ -111,26 +111,6 @@ public sealed class TerminalViewCleanupTests
         Assert.Equal(0, received);
     }
 
-    [Theory]
-    [InlineData((int)RetainedViewLifecycleBehavior.Deactivate)]
-    [InlineData((int)RetainedViewLifecycleBehavior.LegacyAfterDismissed)]
-    public async Task Retained_switches_keep_messenger_recipients_and_view_actions_live(int profileValue)
-    {
-        var profile = (RetainedViewLifecycleBehavior)profileValue;
-
-        var messenger = new WeakReferenceMessenger();
-        var model = new MessengerModel(messenger) { RetainedViewLifecycleBehavior = profile };
-        messenger.Register<SessionEndingMessage>(model, (_, message) => message.Reply(true));
-        model.SendCustomActionEvent += _ => Task.FromResult<object?>("live");
-        await model.DeactivateRetainedAsync();
-        Assert.False(model.IsPermanentlyDismissed);
-        Assert.Equal(0, model.Detachments);
-        Assert.True(await messenger.Send(new SessionEndingMessage()).Response);
-        Assert.Equal("live", await model.Action());
-        await model.DismissAsync();
-        Assert.Equal(1, model.Detachments);
-    }
-
     [Fact]
     public async Task A_throwing_detach_override_cannot_skip_library_cleanup_or_later_models()
     {
@@ -140,7 +120,7 @@ public sealed class TerminalViewCleanupTests
         first.SendCustomActionEvent += _ => Task.FromResult<object?>("attached");
         first.RegisterSubscriptionCleanup(() => unsubscribed++);
 
-        await LegacyNavigationService.DismissAllAsync([first, last, first]);
+        await ViewModelCleanup.DismissAsync([first, last, first], DismissalReason.RootReplaced);
 
         Assert.Equal(1, first.Detachments);
         Assert.Equal(1, last.Detachments);
@@ -154,8 +134,8 @@ public sealed class TerminalViewCleanupTests
         var first = new Model();
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var last = new Model { Cleanup = () => release.Task };
-        var original = LegacyNavigationService.DismissAllAsync([first, last]);
-        var overlapping = LegacyNavigationService.DismissAllAsync([first]);
+        var original = ViewModelCleanup.DismissAsync([first, last], DismissalReason.RootReplaced);
+        var overlapping = ViewModelCleanup.DismissAsync([first], DismissalReason.RootReplaced);
         var direct = first.DismissAsync();
         try
         {
@@ -176,8 +156,8 @@ public sealed class TerminalViewCleanupTests
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var first = new Model { Cleanup = () => release.Task };
         var second = new Model { Cleanup = () => release.Task };
-        var batch1 = LegacyNavigationService.DismissAllAsync([first, second]);
-        var batch2 = LegacyNavigationService.DismissAllAsync([second, first]);
+        var batch1 = ViewModelCleanup.DismissAsync([first, second], DismissalReason.RootReplaced);
+        var batch2 = ViewModelCleanup.DismissAsync([second, first], DismissalReason.RootReplaced);
         release.SetResult();
         await Task.WhenAll(batch1, batch2).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Assert.Equal(1, first.Detachments);
@@ -199,7 +179,7 @@ public sealed class TerminalViewCleanupTests
         ExecutionContext? context = null;
         var first = new Model { Cleanup = () => { context = ExecutionContext.Capture(); return Task.CompletedTask; } };
         var later = new Model();
-        LegacyNavigationService.DismissAllAsync([first, later]).GetAwaiter().GetResult();
+        ViewModelCleanup.DismissAsync([first, later], DismissalReason.RootReplaced).GetAwaiter().GetResult();
         return (context!, new(later));
     }
 

@@ -57,7 +57,7 @@ public abstract partial class ViewBase
     protected virtual bool NotifyLanguageChange() => false;
     /// <summary>Opens an independent visual loading scope and returns its idempotent cleanup handle.</summary>
     protected virtual IDisposable ShowLoading(LoadingType type) => AddLoadingToken(type);
-    /// <summary>Clears all managed loading scopes and direct busy state for legacy force-hide behavior.</summary>
+    /// <summary>Clears all managed loading scopes and direct busy state for explicit force-hide behavior.</summary>
     protected virtual void HideLoading()
     {
         var removed = ClearLoadingTokens();
@@ -71,10 +71,10 @@ public abstract partial class ViewBase
         else Hide();
     }
     /// <summary>Displays a confirmation on the handled page for this view's window.</summary>
-    protected Task<bool> DisplayAlertAsync(string title, string message, string accept, string cancel) =>
-        Navigator.DisplayAlertAsync(title, message, accept, cancel);
+    public Task<bool> DisplayAlertAsync(string title, string message, string accept, string cancel) =>
+        (Navigator ?? throw new InvalidOperationException("An alert requires an attached navigation entry.")).DisplayAlertAsync(title, message, accept, cancel);
 
     /// <summary>Displays an informational alert on the handled page for this view's window.</summary>
-    protected Task DisplayAlertAsync(string title, string message, string cancel) =>
-        Navigator.DisplayAlertAsync(title, message, cancel);
+    public Task DisplayAlertAsync(string title, string message, string cancel) =>
+        (Navigator ?? throw new InvalidOperationException("An alert requires an attached navigation entry.")).DisplayAlertAsync(title, message, cancel);
 }

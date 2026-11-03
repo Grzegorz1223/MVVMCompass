@@ -11,8 +11,23 @@ namespace MVVMCompass
     {
         // ── Pending-parent ambient context ──────────────────────────
         // Allows child tab VMs to access their ParentViewModel during
-        // construction (before LegacyNavigationService sets it explicitly).
+        // construction, before the registered child view is created.
         private static readonly AsyncLocal<PendingParentScope?> _pendingParentViewModel = new();
+
+        /// <summary>Constructs a model with the supplied parent available during its constructor, restoring the previous parent even on failure.</summary>
+        /// <remarks>For composition roots and isolated tests. The factory must construct a fresh model synchronously.
+        /// This does not create navigation entries, DI scopes, activation or lifetime ownership. Registered navigation supplies its own parent.</remarks>
+        public static TViewModel ConstructWithParent<TViewModel>(ViewModelBase parent, Func<TViewModel> create)
+            where TViewModel : ViewModelBase
+        {
+            ArgumentNullException.ThrowIfNull(parent);
+            ArgumentNullException.ThrowIfNull(create);
+            ObjectDisposedException.ThrowIf(parent.IsDismissed, parent);
+            if (Services.NavigationEntryScope.IsConstructing)
+                throw new InvalidOperationException("Registered navigation supplies the constructor parent; do not override it.");
+            using var scope = SetPendingParent(parent);
+            return create() ?? throw new InvalidOperationException("The model factory returned null.");
+        }
 
         /// <summary>
         /// Sets the ambient parent that will be auto-assigned to any
@@ -58,11 +73,7 @@ namespace MVVMCompass
         /// <summary>Gets explicit child and resource ownership for permanent cleanup.</summary>
         public NavigationOwnershipNode Ownership => Lifetime.Ownership;
 
-        internal Services.RootPreparation? PendingRootPreparation { get; set; }
 
-        internal Services.NavigationCallbackQueue? PendingNavigationCallbacks { get; set; }
-
-        internal Func<Func<Task>, string, bool>? NativeLifecycleObserver { get; set; }
         private List<Action>? subscriptionCleanup;
         private int viewDetached;
         private TaskCompletionSource? viewDetachmentSource;
@@ -90,9 +101,6 @@ namespace MVVMCompass
 
         /// <summary>Gets whether this model is permanently removed, including replacement of its host.</summary>
         public bool IsPermanentlyDismissed => IsDismissed || IsHostReplaced;
-
-        /// <summary>The callback used on a retained tab or flyout switch.</summary>
-        internal RetainedViewLifecycleBehavior RetainedViewLifecycleBehavior { get; set; }
 
         /// <summary>Ends this instance's lifetime; all callers await the same cleanup.</summary>
         public Task DismissAsync()
@@ -129,11 +137,6 @@ namespace MVVMCompass
             }
         }
 
-        internal Task DeactivateRetainedAsync() =>
-            RetainedViewLifecycleBehavior == RetainedViewLifecycleBehavior.LegacyAfterDismissed
-                ? AfterDismissed()
-                : Deactivated();
-
         private Task DismissCoreAsync() => AfterDismissed();
 
         void INavigationLifetimeFinalizer.DetachView()
@@ -160,11 +163,7 @@ namespace MVVMCompass
             foreach (var unsubscribe in subscriptionCleanup?.ToArray() ?? [])
                 try { unsubscribe(); }
                 catch (Exception error) { NavigationDiagnostics.Report(error, "Subscription cleanup"); }
-            NativeLifecycleObserver = null;
             Navigator = null;
-            AddedTabbedViewModels = null;
-            AddedFlyoutViewModels = null;
-            ToggledFlyoutVisibility = null;
             DisplayToastEvent = null;
             SendCustomActionEvent = null;
             ShowLoadingEvent = null;
@@ -175,15 +174,6 @@ namespace MVVMCompass
         }
 
         internal Func<Func<Task<object?>>, Task<object?>> CustomActionDispatcher { get; set; } = action => action();
-
-        /// <summary>Raised to compose declared child tabs under this model.</summary>
-        internal event Func<TabbedViewModelsEventArgs, Task>? AddedTabbedViewModels;
-
-        /// <summary>Raised to compose declared flyout destinations and their menu.</summary>
-        internal event Func<FlyoutViewModelsEventArgs, Task>? AddedFlyoutViewModels;
-
-        /// <summary>Raised to toggle the owning flyout menu.</summary>
-        internal event EventHandler<object?>? ToggledFlyoutVisibility;
 
         /// <summary>Raised to request a toast from the associated view.</summary>
         public event Func<ToastEventArgs, Task>? DisplayToastEvent;
@@ -247,41 +237,15 @@ namespace MVVMCompass
             set { SetProperty(ref _isModal, value); }
         }
 
-        /// <summary>Indicates the preserved popup-return state for legacy presentation callbacks.</summary>
+        /// <summary>Indicates the preserved popup-return state for presentation callbacks.</summary>
         public bool IsComingFromPopup = false;
 
         /// <summary>
         /// True while a CommunityToolkit popup is displayed over this page. Derived by
-        /// <c>LegacyNavigationService</c> from the toolkit's PopupPage navigation predicates, so views no
+        /// the popup ownership tracker, so views no
         /// longer have to hand-signal "a popup is up" at every ShowPopup call site.
         /// </summary>
         public bool IsPopupOpen { get; set; }
-
-        /// <summary>Awaits child tab composition, preserving existing retained children on repeated calls.</summary>
-        internal virtual async Task AddTabbedViewModels(TabbedViewModelsEventArgs e)
-        {
-            if (AddedTabbedViewModels != null)
-            {
-                foreach (Func<TabbedViewModelsEventArgs, Task> handler in AddedTabbedViewModels.GetInvocationList())
-                    await handler(e);
-            }
-        }
-
-        /// <summary>Awaits flyout composition and cleanup of obsolete retained items.</summary>
-        internal virtual async Task AddFlyoutViewModels(FlyoutViewModelsEventArgs e)
-        {
-            if (AddedFlyoutViewModels != null)
-            {
-                foreach (Func<FlyoutViewModelsEventArgs, Task> handler in AddedFlyoutViewModels.GetInvocationList())
-                    await handler(e);
-            }
-        }
-
-        /// <summary>Requests that the owning flyout menu toggle its visibility.</summary>
-        internal void ToggleFlyoutVisibility()
-        {
-            ToggledFlyoutVisibility?.Invoke(this, null);
-        }
 
         /// <summary>Creates a command that marks this model busy during execution and restores its busy state even when the action fails.</summary>
         protected virtual ICommand CreateCommand(Action action)
@@ -438,51 +402,6 @@ namespace MVVMCompass
         }
     }
 
-    /// <summary>Declares child tabs and their parent for initial or repeated composition.</summary>
-    internal class TabbedViewModelsEventArgs : EventArgs
-    {
-        /// <summary>Gets child declarations in composition order, including parameters and visibility metadata.</summary>
-        public IEnumerable<TabModel> TabbedViewModels { get; }
-
-        /// <summary>Gets the parent model that owns the declared children.</summary>
-        public ViewModelBase ParentViewModel { get; }
-
-        /// <summary>Creates tabs from the type-only declaration.</summary>
-        public TabbedViewModelsEventArgs(IEnumerable<Type> tabbedViewModels, ViewModelBase parentViewModel)
-            : this(tabbedViewModels.Select(type => new TabModel(type)), parentViewModel) { }
-
-        /// <summary>Gets the type-only projection for type-only consumers.</summary>
-        public IEnumerable<Type> TabbedViewModelTypes => TabbedViewModels.Select(tab => tab.TabViewModelType);
-
-        /// <summary>Declares child tabs and their parent for initial or repeated composition.</summary>
-        public TabbedViewModelsEventArgs(IEnumerable<TabModel> tabbedViewModels, ViewModelBase parentViewModel)
-        {
-            TabbedViewModels = tabbedViewModels.ToArray();
-            ParentViewModel = parentViewModel;
-        }
-    }
-
-    /// <summary>Declares retained flyout destinations, their parent and the menu model type.</summary>
-    internal class FlyoutViewModelsEventArgs : EventArgs
-    {
-        /// <summary>Gets declarations for the retained flyout destinations.</summary>
-        public IEnumerable<FlyoutModel> FlyoutModels { get; }
-
-        /// <summary>Gets the parent model that owns the declared children.</summary>
-        public ViewModelBase ParentViewModel { get; }
-
-        /// <summary>Gets the model type registered for the flyout menu view.</summary>
-        public Type FlyoutViewFlyoutViewModel { get; }
-
-        /// <summary>Declares retained flyout destinations, their parent and the menu model type.</summary>
-        public FlyoutViewModelsEventArgs(IEnumerable<FlyoutModel> flyoutModels, ViewModelBase parentViewModel, Type flyoutViewFlyoutViewModel)
-        {
-            FlyoutModels = flyoutModels;
-            ParentViewModel = parentViewModel;
-            FlyoutViewFlyoutViewModel = flyoutViewFlyoutViewModel;
-        }
-    }
-
     /// <summary>Toast or notification identity, category and optional message.</summary>
     public class ToastEventArgs
     {
@@ -547,52 +466,6 @@ namespace MVVMCompass
         public CustomActionParameter(object? parameter = null)
         {
             Parameter = parameter;
-        }
-    }
-
-    /// <summary>Declares a flyout destination model type with optional initialization parameters.</summary>
-    internal class FlyoutModel
-    {
-        /// <summary>Gets the registered model type for this flyout destination.</summary>
-        public Type FlyoutViewModelType { get; set; }
-
-        /// <summary>Gets optional initialization parameters for this destination.</summary>
-        public Dictionary<string, object>? Parameters { get; set; }
-
-        /// <summary>Declares a flyout destination model type with optional initialization parameters.</summary>
-        public FlyoutModel(Type viewModelType, Dictionary<string, object>? parameters = null)
-        {
-            FlyoutViewModelType = viewModelType;
-            Parameters = parameters;
-        }
-    }
-
-    /// <summary>Declares a child model type, parameters, initial selection and tab-bar visibility.</summary>
-    internal class TabModel
-    {
-        /// <summary>Gets the registered model type for this child tab.</summary>
-        public Type TabViewModelType { get; set; }
-
-        /// <summary>Gets optional initialization parameters for this destination.</summary>
-        public Dictionary<string, object>? Parameters { get; set; }
-
-        /// <summary>Gets whether this declaration requests initial selection.</summary>
-        public bool ShouldBeSelectedByDefault { get; set; }
-
-        /// <summary>
-        /// When true the tab is navigable but gets no item in the horizontal tab bar — for tabs surfaced only
-        /// by an alternative presentation such as a compact rail.
-        /// </summary>
-        public bool HideInTabBar { get; set; }
-
-        /// <summary>Declares a child model type, parameters, initial selection and tab-bar visibility.</summary>
-        public TabModel(Type viewModelType, bool shouldBeSelectedByDefault = false,
-            Dictionary<string, object>? parameters = null, bool hideInTabBar = false)
-        {
-            TabViewModelType = viewModelType;
-            ShouldBeSelectedByDefault = shouldBeSelectedByDefault;
-            Parameters = parameters;
-            HideInTabBar = hideInTabBar;
         }
     }
 

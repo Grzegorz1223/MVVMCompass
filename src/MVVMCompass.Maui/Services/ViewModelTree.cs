@@ -3,12 +3,12 @@ using MVVMCompass.Core;
 
 namespace MVVMCompass.Services;
 
-/// <summary>Collects owned view models in child-before-parent order, including retained content.</summary>
+/// <summary>Collects referenced view models in child-before-parent order; callers must validate ownership.</summary>
 internal static class ViewModelTree
 {
     internal static List<ViewModelBase> Collect(Element? root, bool includeModals = false)
     {
-        if (!includeModals && root is ContentPage { Content: null } && root is not IFlyoutMenuItems && root is not ICustomTabbedViewBase)
+        if (!includeModals && root is ContentPage { Content: null })
         {
             var owned = (root as IHasVM)?.ViewModel;
             var bound = root.BindingContext as ViewModelBase;
@@ -40,7 +40,7 @@ internal static class ViewModelTree
         {
             if (element == null) return;
             // Leaf controls cannot form traversal cycles; model deduplication still applies.
-            if (element is not (NavigationPage or TabbedPage or FlyoutPage or IFlyoutMenuItems or ICustomTabbedViewBase
+            if (element is not (NavigationPage or TabbedPage or FlyoutPage
                 or ContentPage or ContentView or Layout or ScrollView or Border))
             {
                 AddBindings(element);
@@ -56,15 +56,6 @@ internal static class ViewModelTree
                 Visit(flyout.Detail);
                 Visit(flyout.Flyout);
             }
-            if (element is IFlyoutMenuItems menu && menu.MenuItems != null)
-                foreach (var item in menu.MenuItems.ToArray()) Visit(item.Content);
-            if (element is ICustomTabbedViewBase custom)
-                foreach (var child in custom.Children.ToArray())
-                {
-                    Visit(child.View);
-                    Visit(child.Content);
-                    Add(child.ViewModel);
-                }
             if (element is ContentPage contentPage) Visit(contentPage.Content);
             if (element is ContentView contentView) Visit(contentView.Content);
             if (element is Layout layout)
@@ -111,9 +102,7 @@ internal static class ViewModelTree
     {
         NavigationPage stack => stack.Navigation.NavigationStack,
         TabbedPage tabs => tabs.Children,
-        FlyoutPage flyout => new[] { flyout.Detail, flyout.Flyout }.OfType<Element>()
-            .Concat(flyout.Flyout is IFlyoutMenuItems menu ? menu.MenuItems?.Select(item => item.Content).OfType<Element>() ?? [] : []),
-        ICustomTabbedViewBase custom => custom.Children.SelectMany(child => new Element[] { child.View, child.Content }),
+        FlyoutPage flyout => new[] { flyout.Detail, flyout.Flyout }.OfType<Element>(),
         ContentPage page => new[] { page.Content }.OfType<Element>(),
         ContentView content => new[] { content.Content }.OfType<Element>(),
         Layout layout => layout.Children.OfType<Element>(),

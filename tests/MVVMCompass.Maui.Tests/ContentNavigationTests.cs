@@ -304,17 +304,17 @@ public sealed class ContentNavigationTests : IAsyncDisposable
         var (host, context) = await CreateAsync(Plain(new Model()));
         var detail = new Model { Allowed = false };
         Success(await context.PushAsync(Factory(detail), cancellationToken: Token));
-        Assert.Equal(NavigationStatus.GuardRejected, (await host.BackAsync(cancellationToken: Token)).Status);
+        Assert.Equal(NavigationStatus.GuardRejected, (await context.BackAsync(cancellationToken: Token)).Status);
         Assert.Same(detail, context.Current!.ViewModel);
         detail.Allowed = true;
-        Success(await host.BackAsync(new(null) { Origin = context.Current.Entry }, cancellationToken: Token));
+        Success(await context.BackAsync(new() { Origin = context.Current.Entry }, cancellationToken: Token));
         Assert.True(detail.IsDismissed);
         var modalModel = new Model { Allowed = false };
         Success(await context.OpenModalAsync(Plain(modalModel), view => view.Presenter.AnimateNavigation = false, cancellationToken: Token));
-        Assert.Equal(NavigationStatus.GuardRejected, (await host.CloseModalAsync(cancellationToken: Token)).Status);
+        Assert.Equal(NavigationStatus.GuardRejected, (await host.CurrentContentNavigation!.CloseModalAsync(cancellationToken: Token)).Status);
         Assert.Single(host.Window.Navigation.ModalStack);
         modalModel.Allowed = true;
-        Success(await host.CloseModalAsync(cancellationToken: Token));
+        Success(await host.CurrentContentNavigation!.CloseModalAsync(cancellationToken: Token));
         Assert.True(context.IsActive);
     }
 
@@ -849,7 +849,7 @@ public sealed class ContentNavigationTests : IAsyncDisposable
         Success(modal);
         Assert.Empty(secondHost.Window.Navigation.ModalStack);
         Assert.True(second.View.Toolbar.LeadingCommand.CanExecute(null));
-        Success(await secondHost.BackAsync(cancellationToken: Token));
+        Success(await second.BackAsync(cancellationToken: Token));
         Assert.True(secondDetail.IsDismissed); Assert.False(firstDetail.IsDismissed);
         Assert.Same(modal.Value, firstHost.CurrentContentNavigation);
         Success(await firstHost.ReplaceContentRootAsync(new(Plain(new Model())), cancellationToken: Token));
@@ -890,7 +890,7 @@ public sealed class ContentNavigationTests : IAsyncDisposable
 
     private async Task<(MauiNavigationHost, NavigationContext)> CreateAsync(NavigationDefinition definition, Action<NavigationView>? configure = null)
     {
-        var host = new MauiNavigationHostFactory(new Locator(), new()).ForWindow(application.Add());
+        var host = MauiNavigationHostFactory.GetOrCreateHost(application.Add());
         hosts.Add(host);
         var result = await host.ReplaceContentRootAsync(new(definition), view =>
         { view.Presenter.AnimateNavigation = false; configure?.Invoke(view); }, Token).WaitAsync(TimeSpan.FromSeconds(10), Token);
@@ -943,13 +943,5 @@ public sealed class ContentNavigationTests : IAsyncDisposable
     {
         internal Window Add() => (Window)((IApplication)this).CreateWindow(null);
         protected override Window CreateWindow(IActivationState? state) => new(new ContentPage());
-    }
-    private sealed class Locator : IViewLocator
-    {
-        public void Initialize(Dictionary<Type, Type> pairs) { }
-        public VisualElement CreateAndBindVEFor<T>() where T : ViewModelBase => throw new NotSupportedException();
-        public VisualElement CreateAndBindVEFor(Type type) => throw new NotSupportedException();
-        public Type FindVEForViewModel(Type type) => throw new NotSupportedException();
-        public Type FindViewModelForVE(Type type) => throw new NotSupportedException();
     }
 }

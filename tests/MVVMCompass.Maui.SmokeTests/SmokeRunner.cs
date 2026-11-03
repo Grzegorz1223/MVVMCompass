@@ -19,14 +19,7 @@ public sealed class SmokeRunner(IServiceProvider services, MauiNavigationHostFac
         try
         {
             Check(MainThread.IsMainThread, "Unified: native UI dispatcher");
-            if (suite is not ("unified" or "ui" or "tabs"))
-            {
-                var regression = services.GetRequiredService<RegressionSmokeRunner>();
-                await regression.RunAsync(writeReport: false);
-                checks.AddRange(regression.Checks); skipped.AddRange(regression.Skipped);
-                if (regression.Failure != null) throw new InvalidOperationException(regression.Failure);
-            }
-            var host = factory.ForWindow(window);
+            var host = MauiNavigationHostFactory.GetOrCreateHost(window);
             var registry = services.GetRequiredService<MVVMCompass.Services.RegisteredScreenFactory>();
             var root = await host.ReplaceContentRootAsync(new(registry.Definition(typeof(WelcomeViewModel))));
             Check(root.IsSuccess, "Unified: initialize registered XAML sample");

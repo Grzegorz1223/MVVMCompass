@@ -9,6 +9,7 @@ public sealed partial class UnifiedNavigationTests
     {
         internal Func<PopupModel, Task>? Before;
         internal Func<PopupModel, Task>? Cleanup;
+        internal Action<PopupView>? Created;
         internal Action<PopupView>? Opened;
     }
 
